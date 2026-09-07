@@ -1,0 +1,47 @@
+name: launcher
+
+on:
+  push:
+    paths:
+      - "apps/studio/launcher/**"
+      - ".github/workflows/launcher.yml"
+  pull_request:
+    paths:
+      - "apps/studio/launcher/**"
+      - ".github/workflows/launcher.yml"
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/studio/launcher/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/studio/launcher/frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+  desktop:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/studio/launcher/desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/studio/launcher/desktop/src-tauri
+      - name: Install WebKitGTK build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf pkg-config
+      - run: cargo check

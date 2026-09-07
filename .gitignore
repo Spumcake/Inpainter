@@ -1,0 +1,23 @@
+# Planning / local notes — not product source
+.project/
+
+# Dependencies and build output
+node_modules/
+target/
+dist/
+*.tsbuildinfo
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+.dev.vars
+*.pem
+
+# Wrangler
+.wrangler/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp

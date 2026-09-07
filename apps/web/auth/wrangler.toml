@@ -1,0 +1,9 @@
+name = "inpainter-auth"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+
+# Publishable client values — designed to be public. The service-role key
+# must never be added here.
+[vars]
+SUPABASE_URL = "https://zhfgxembfkkrltimhzdw.supabase.co"
+SUPABASE_PUBLISHABLE_KEY = "sb_publishable_GZUhE3UoMBHrOOI6Z3x2NQ_QkBCPZFD"
