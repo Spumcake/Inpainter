@@ -121,8 +121,17 @@ body {
   cursor: pointer;
 }
 
-.signin-primary:disabled {
-  opacity: 0.7;
+.signin-actions {
+  transition: opacity 180ms ease;
+}
+
+.signin-actions.is-waiting {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.signin-primary:disabled,
+.signin-secondary:disabled {
   cursor: default;
 }
 
@@ -138,18 +147,10 @@ body {
   border: 1px solid #525252;
 }
 
-.signin-status,
 .signin-error {
   font-size: 13px;
   line-height: 1.4;
   margin: -4px 0 12px;
-}
-
-.signin-status {
-  color: #a3a3a3;
-}
-
-.signin-error {
   color: #f87171;
 }
 
@@ -173,6 +174,7 @@ body {
 
 .success {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   width: 100%;
@@ -181,4 +183,26 @@ body {
   color: #fff;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   font-size: 16px;
+  gap: 12px;
+  padding: 48px;
+  text-align: center;
+}
+
+.success-logo {
+  width: 48px;
+  height: 48px;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.success-status {
+  color: #a3a3a3;
+  font-size: 13px;
+}
+
+.success-retry {
+  width: auto;
+  min-width: 160px;
+  margin-top: 8px;
+  margin-bottom: 0;
 }

@@ -1,4 +1,6 @@
 mod auth;
+mod cli;
+mod studio;
 
 use tauri::{
     image::Image,
@@ -8,9 +10,11 @@ use tauri::{
 };
 
 use auth::{get_auth_session, sign_in, AuthState};
+use studio::{launch_studio, launch_studio_for_app};
 
 const TRAY_ICON_ID: &str = "inpainter-launcher";
 const MENU_OPEN: &str = "open_inpainter";
+const MENU_SIGN_OUT: &str = "sign_out";
 const MENU_QUIT: &str = "quit";
 
 fn load_tray_icon() -> Image<'static> {
@@ -23,6 +27,37 @@ fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+fn open_from_tray(app: &tauri::AppHandle) {
+    let authenticated = match auth::refresh_auth_status() {
+        Ok(value) => {
+            if let Some(state) = app.try_state::<AuthState>() {
+                state.set_authenticated_flag(value);
+            }
+            value
+        }
+        Err(err) => {
+            eprintln!("[inpainter] failed to read CLI session: {err}");
+            app.try_state::<AuthState>()
+                .is_some_and(|state| state.is_authenticated())
+        }
+    };
+    if authenticated {
+        if let Err(err) = launch_studio_for_app(app) {
+            eprintln!("[inpainter] failed to open Studio: {err}");
+            show_main_window(app);
+        }
+        return;
+    }
+    show_main_window(app);
+}
+
+fn sign_out_from_tray(app: &tauri::AppHandle) {
+    if let Err(err) = auth::sign_out(app) {
+        eprintln!("[inpainter] failed to sign out: {err}");
+    }
+    show_main_window(app);
 }
 
 // WebKitGTK on Linux occasionally finishes the window/compositor handshake
@@ -49,19 +84,21 @@ fn guard_against_blank_webview(app: &tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .manage(AuthState::default())
-        .invoke_handler(tauri::generate_handler![sign_in, get_auth_session])
+        .invoke_handler(tauri::generate_handler![sign_in, get_auth_session, launch_studio])
         .setup(|app| {
             auth::load_session_on_boot(app.handle());
             let open = MenuItem::with_id(app, MENU_OPEN, "Open Inpainter", true, None::<&str>)?;
+            let sign_out = MenuItem::with_id(app, MENU_SIGN_OUT, "Sign Out", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, MENU_QUIT, "Quit Application", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &sign_out, &quit])?;
 
             let _tray = TrayIconBuilder::with_id(TRAY_ICON_ID)
                 .icon(load_tray_icon())
                 .menu(&menu)
                 .tooltip("Inpainter")
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    MENU_OPEN => show_main_window(app),
+                    MENU_OPEN => open_from_tray(app),
+                    MENU_SIGN_OUT => sign_out_from_tray(app),
                     MENU_QUIT => app.exit(0),
                     _ => {}
                 })

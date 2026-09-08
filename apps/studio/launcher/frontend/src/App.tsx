@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import SignIn from "./SignIn";
 import Splash from "./Splash";
 import Success from "./Success";
 
-type View = "splash" | "signin" | "success";
+type View = "splash" | "signin" | "opening";
 
 type AuthSessionPayload = {
   authenticated: boolean;
@@ -19,6 +19,21 @@ export default function App() {
   const [view, setView] = useState<View>("splash");
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const launching = useRef(false);
+
+  function openStudio() {
+    if (launching.current) {
+      return;
+    }
+    launching.current = true;
+    setError(null);
+    setView("opening");
+    void invoke("launch_studio")
+      .catch((err) => {
+        launching.current = false;
+        setError(err instanceof Error ? err.message : String(err));
+      });
+  }
 
   useEffect(() => {
     if (!isTauri()) {
@@ -32,7 +47,11 @@ export default function App() {
         if (cancelled) {
           return;
         }
-        setView(session.authenticated ? "success" : "signin");
+        if (session.authenticated) {
+          openStudio();
+        } else {
+          setView("signin");
+        }
       })
       .catch(() => {
         if (!cancelled) {
@@ -43,9 +62,13 @@ export default function App() {
     const unlisten = listen<AuthSessionPayload>("auth-session", (event) => {
       if (event.payload.authenticated) {
         setWaiting(false);
-        setError(null);
-        setView("success");
+        openStudio();
+        return;
       }
+      launching.current = false;
+      setWaiting(false);
+      setError(null);
+      setView("signin");
     });
 
     return () => {
@@ -64,10 +87,13 @@ export default function App() {
     try {
       const session = await invoke<AuthSessionPayload>("sign_in");
       if (session.authenticated) {
-        setView("success");
+        openStudio();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.toLowerCase().includes("cancelled")) {
+        setError(message);
+      }
     } finally {
       setWaiting(false);
     }
@@ -77,8 +103,8 @@ export default function App() {
     return <SignIn waiting={waiting} error={error} onSignIn={handleSignIn} />;
   }
 
-  if (view === "success") {
-    return <Success />;
+  if (view === "opening") {
+    return <Success error={error} onRetry={openStudio} />;
   }
 
   return <Splash />;

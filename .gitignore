@@ -6,6 +6,10 @@ node_modules/
 target/
 dist/
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
 
 # Env and secrets
 .env

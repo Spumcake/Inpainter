@@ -157,7 +157,10 @@ function signInPage(url: URL, env: Env): Response {
 </html>`;
 
   return new Response(html, {
-    headers: { "content-type": "text/html; charset=utf-8" },
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
   });
 }
 
