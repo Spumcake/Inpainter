@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "phase": {
+      "default": "boot"
+    },
+    "messages": {
+      "default": []
+    },
+    "request_id": {
+      "default": 0
+    },
+    "skill": {
+      "default": "openai/discuss"
+    },
+    "directory": {
+      "default": "unsorted"
+    }
+  }
+}

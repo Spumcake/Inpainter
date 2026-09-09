@@ -1,0 +1,5 @@
+{
+  "id": "openai",
+  "serves": ["discuss"],
+  "endpoint": "http://127.0.0.1:3102"
+}

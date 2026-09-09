@@ -1,0 +1,2 @@
+# Copy to .dev.vars and fill in. Do not commit .dev.vars.
+OPENAI_API_KEY=

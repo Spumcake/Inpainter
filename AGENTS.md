@@ -1,145 +1,266 @@
-Inpainter uses strict separation of concerns. Every implementation must be placed in the layer that owns that responsibility. Do not move logic across architectural boundaries for convenience.
+# AGENTS.md
 
-### Core UI — React
+Inpainter has intentionally strict architectural boundaries.
 
-**Owns:**
+Do not redesign those boundaries while implementing a task.
 
-* Stable application shell
-* Shared visual components
-* Layout, navigation, panels, dialogs, menus, inputs, and common interaction patterns
-* Rendering capability schemas into visible interfaces
-* Client-side interaction state that is purely presentational
-
-**Does not own:**
-
-* Capability implementation
-* CLI execution logic
-* Python business logic
-* Provider integrations
-* Capability-specific behavior that belongs in scriptable definitions
-
-React should render and communicate. It should not become the implementation layer for capabilities.
+This file provides the product context and the rules required to work safely in the repository. The current-state map of layers, flows, and repository layout lives in `ARCHITECTURE.md`. Read the relevant section there before modifying code.
 
 ---
 
-### Scriptable Components — Lua
+# What Inpainter Is
 
-**Owns:**
+Inpainter is a **purpose-built agentic environment for visual production**.
 
-* Capability presentation definitions
-* Capability-specific UI composition
-* Input/output declarations
-* Action declarations
-* Conditional presentation logic
-* Mapping user interactions to named CLI operations
-* Capability metadata exposed to the UI and agent
+It is not intended to become a general-purpose AI desktop assistant.
 
-**Does not own:**
+General-purpose agents center on:
 
-* Python execution
-* Direct provider calls
-* Shell/process implementation
-* Heavy application logic
-* Core reusable React components
+> conversation + tools
 
-Lua describes **what a capability exposes and how it appears**, not how the underlying work is performed.
+Inpainter centers on:
 
----
+> **a visual production being manipulated by an agent**
 
-### Capability Schema — Shared Representation
+The conversation is an interface to that production, not the product's fundamental abstraction.
 
-**Owns:**
+The agent should ultimately be able to work across:
 
-* Portable representation of capabilities
-* Capability identity
-* Inputs and outputs
-* Available actions
-* Presentation metadata
-* State and validation definitions
-* Mapping actions to executable CLI operations
+* project files
+* source material
+* reference images
+* scripts
+* generated assets
+* intermediate outputs
+* image models
+* video models
+* voice models
+* local creative tools
+* production workflows
 
-The schema is the contract shared between Lua, React, the agent, and the CLI.
+The agent determines what work needs to happen, selects appropriate capabilities, executes them through Inpainter's interfaces, and saves the resulting artifacts back into the project.
 
-No consumer should need to inspect another layer's implementation in order to understand a capability.
+A production might eventually involve:
 
----
+```text
+inspect project
+    ↓
+identify assets and constraints
+    ↓
+develop concept / shot plan
+    ↓
+prepare scripts and references
+    ↓
+generate storyboards / keyframes
+    ↓
+select appropriate models
+    ↓
+generate image / video / voice assets
+    ↓
+assemble and iterate
+    ↓
+upscale / polish
+    ↓
+save final and intermediate assets
+```
 
-### CLI — Execution Boundary
-
-**Owns:**
-
-* Stable executable operations
-* Argument parsing and validation
-* Dispatching requests to implementation code
-* Returning structured results and errors
-* Providing the common execution interface used by the UI, agent, and human users
-
-**Does not own:**
-
-* UI presentation
-* React behavior
-* Capability layout
-* Agent decision-making
-
-All executable capability behavior must be accessible through a CLI operation.
-
-The UI and agent should invoke capabilities through this boundary rather than reaching directly into Python implementation code.
+This production-oriented model should inform architectural decisions.
 
 ---
 
-### Python — Capability Implementation
+# Product Shape
 
-**Owns:**
+Inpainter is one product with two incarnations.
 
-* Actual capability behavior
-* Image, video, audio, and data processing
-* Model and provider integrations
-* File transformations
-* External tool integrations
-* Complex computation
-* Business logic required to perform CLI operations
+## Inpainter
 
-**Does not own:**
+`inpainter.app`
 
-* UI layout
-* React components
-* Capability presentation
-* Client interaction state
+The web version.
 
-Python exists behind the CLI boundary.
+It provides the agentic visual-production environment using project files stored within Inpainter.
 
-If Python functionality must be exposed elsewhere in Inpainter, expose it through a CLI operation rather than importing Python implementation directly into another layer.
+The web version launches first because it does not require local filesystem integration or desktop drawing/animation infrastructure.
+
+## Inpainter Studio
+
+The desktop version.
+
+Studio shares the same agent, capability model, project concepts, and production architecture as the web application.
+
+Studio additionally provides:
+
+* local filesystem context
+* local tools
+* drawing
+* animation
+* performance authoring
+* keyframe authoring
+* deeper artist-controlled workflows
+
+Studio is not a separate product architecture.
+
+It is the desktop incarnation of Inpainter.
+
+See `ARCHITECTURE.md`'s Product Surfaces for process ownership of the web app, launcher, and Studio authoring surface.
 
 ---
 
-## Required Execution Flow
+# Long-Term Direction
 
-The intended capability flow is:
+The original ambition remains important:
 
-**Lua capability definition → capability schema → React / agent → CLI operation → Python implementation**
+> **a generative animation pipeline for professional character and storyboard artists**
 
-For remote functionality:
+The broader agentic production environment is the foundation for reaching that goal.
 
-**CLI / Python implementation → platform API → remote service**
+Studio should eventually allow artists to author:
 
-Each boundary should remain explicit.
+* poses
+* performances
+* timing
+* drawings
+* storyboards
+* keyframes
+
+and use generative models to execute and refine that authored material.
+
+The intended philosophy is:
+
+> **human-authored keyframes produce human-authored results; generative models handle execution rather than replacing creative control.**
+
+Artists should ultimately be able to directly correct:
+
+* continuity errors
+* hallucinations
+* poses
+* timing
+* individual shots
+* generated details
+
+rather than depending on one-shot generation.
+
+Do not introduce architecture that makes this future direction harder.
 
 ---
 
-## Placement Rule
+# Feature Discussions
 
-Before implementing any behavior, determine which layer owns it.
+When a new feature is being worked out, that discussion is sometimes written down as an audit.
 
-If the behavior:
+Those files live under:
 
-* **renders or arranges interface elements** → React
-* **describes how a capability appears or connects to actions** → Lua
-* **defines the portable structure of a capability** → capability schema
-* **provides an executable public operation** → CLI
-* **performs the actual work** → Python
-* **decides what operation to use** → agent
-* **requires shared remote infrastructure** → server/platform API
+```text
+.project/audits/
+```
 
-Do not duplicate the same responsibility across multiple layers.
+They are not the architecture itself. They record the reasoning, questions, and decisions around a feature so later work does not have to reconstruct the conversation.
 
-If functionality appears to require crossing these boundaries, introduce an explicit interface between the layers instead of merging their responsibilities.
+If a task involves a feature that may already have been discussed, read the relevant audit before proposing or implementing a design. `ARCHITECTURE.md`'s Open Questions lists the audits that currently hold unsettled decisions.
+
+---
+
+# Core Invariant
+
+Inpainter separates **determination, identity, presentation, execution, routing, and implementation**.
+
+These responsibilities must remain distinct.
+
+---
+
+# No Duplicate Ownership
+
+Every decision has one owner.
+
+If Lua decides session behavior, Python must not contain a fallback copy of that behavior.
+
+If a layout owns capability presentation, React must not independently encode the same capability-specific rules.
+
+If a provider owns vendor behavior, neither the CLI nor platform API should duplicate it.
+
+If functionality needs to cross a boundary, introduce an explicit interface.
+
+Do not merge the responsibilities.
+
+---
+
+# Before Editing Code
+
+Before implementation, determine:
+
+1. What behavior is being requested?
+2. Which layer owns that behavior?
+3. What existing interface crosses the required boundaries?
+4. Which files should change?
+5. Which files should not change?
+
+Do not begin by inventing a new cross-layer abstraction.
+
+Use the existing ownership model first. See `ARCHITECTURE.md`'s Layer Reference and Repository Map.
+
+---
+
+# Implement Vertical Slices
+
+Work on the smallest functional slice that proves the architecture.
+
+Do not create speculative infrastructure for future requirements.
+
+For example, implementing application boot means dispatching the real `app.boot` event, letting Lua return the next state and effects, persisting that state, executing those effects, and testing authenticated and unauthenticated boot.
+
+Stop there.
+
+Do not simultaneously invent every future session event.
+
+See `ARCHITECTURE.md`'s Development Strategy for why slices are preferred over temporary implementations.
+
+# Required Self-Check
+
+Before completing a task, inspect the diff.
+
+Ask:
+
+### Ownership
+
+* Does each new decision live in its owning layer?
+* Did responsibility become duplicated?
+* Did implementation convenience move logic across a boundary?
+
+### Session
+
+* Did Python gain a branch deciding session state or lifecycle behavior?
+* Did Python begin interpreting Lua policy?
+* Could the requested session behavior still be changed by editing Lua without changing Python policy?
+
+### Capability architecture
+
+* Did React gain capability implementation logic?
+* Did a skill gain layout logic?
+* Did the CLI gain provider-specific logic?
+* Did the platform API gain vendor-specific behavior?
+* Did a provider gain application policy?
+
+### Scope
+
+* Were unrelated files modified?
+* Was speculative functionality added?
+* Was an existing interface replaced without the task requiring it?
+
+If the implementation violates ownership, it is not complete.
+
+---
+
+# Stop Condition
+
+If implementing a task appears to require violating an architectural boundary:
+
+**do not silently work around the architecture.**
+
+Instead identify:
+
+1. the requested behavior;
+2. the boundary involved;
+3. why the existing interface is insufficient;
+4. the smallest new interface required to preserve ownership.
+
+Do not solve a local problem by collapsing layers.

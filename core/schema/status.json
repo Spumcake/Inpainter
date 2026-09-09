@@ -1,0 +1,28 @@
+{
+  "$id": "inpainter.core.status",
+  "title": "Core status payload",
+  "type": "object",
+  "properties": {
+    "state": {
+      "type": "string",
+      "default": "unknown"
+    },
+    "authenticated": {
+      "type": "boolean",
+      "default": false
+    },
+    "expires_at": {
+      "type": ["integer", "null"],
+      "default": null
+    },
+    "error": {
+      "type": ["string", "null"],
+      "default": null
+    },
+    "crashed": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "additionalProperties": false
+}
