@@ -1,0 +1,45 @@
+{
+  "system_config": {
+    "environment": "production",
+    "endpoints": [
+      "api.v1.primary",
+      "api.v1.secondary",
+      "internal.auth"
+    ],
+    "metrics_table": [
+      {
+        "id": 101,
+        "module_name": "cpu_monitor",
+        "threshold": 0.85,
+        "status": true
+      },
+      {
+        "id": 102,
+        "module_name": "mem_monitor",
+        "threshold": 0.92,
+        "status": false
+      }
+    ]
+  },
+  "user_record": {
+    "uuid": "a8f9-4b2c-99e1-32d8",
+    "access_logs": [
+      {
+        "timestamp": 1698021450,
+        "ip_address": "192.168.1.50",
+        "action": "login_success"
+      },
+      {
+        "timestamp": 1698021455,
+        "ip_address": "192.168.1.50",
+        "action": "view_dashboard"
+      },
+      {
+        "timestamp": 1698021812,
+        "ip_address": "192.168.1.50",
+        "action": "export_data"
+      }
+    ],
+    "is_active": true
+  }
+}

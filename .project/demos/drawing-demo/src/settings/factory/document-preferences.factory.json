@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "extraDefaults": {
+    "frame.ratio": "16:9",
+    "frame.defaultWidth": 1280,
+    "frame.defaultHeight": 720,
+    "output.ratio": "1:1",
+    "output.defaultWidth": 1024,
+    "output.defaultHeight": 1024,
+    "stylus.pressureCurveX": 0.5,
+    "stylus.pressureCurveY": 0.5,
+    "shortcuts.cut": "Mod+X",
+    "shortcuts.copy": "Mod+C",
+    "shortcuts.paste": "Mod+V",
+    "shortcuts.delete": "Delete",
+    "shortcuts.hide": "Mod+H",
+    "shortcuts.lock": "Mod+L",
+    "shortcuts.group": "Mod+G",
+    "shortcuts.ungroup": "Mod+Shift+G"
+  },
+  "fieldDefaults": {
+    "render.defaultProviderId": "image-2-provider"
+  },
+  "palette": {
+    "newBrushTemplate": {
+      "color": "#22202a",
+      "size": 4,
+      "opacity": 1,
+      "smoothing": 0.5
+    },
+    "factoryBrushes": [
+      {
+        "id": "brush-inking",
+        "name": "Inking",
+        "color": "#22202A",
+        "size": 7,
+        "opacity": 1,
+        "smoothing": 0.5
+      },
+      {
+        "id": "brush-shading",
+        "name": "Shading",
+        "color": "#D1D1D1",
+        "size": 25,
+        "opacity": 1,
+        "smoothing": 0.5
+      },
+      {
+        "id": "brush-sketching",
+        "name": "Sketching",
+        "color": "#6840BF",
+        "size": 7,
+        "opacity": 0.45,
+        "smoothing": 0.5
+      }
+    ]
+  },
+  "eraser": {
+    "newTipTemplate": {
+      "size": 24
+    },
+    "factoryTips": [
+      {
+        "id": "eraser-small",
+        "name": "Small",
+        "size": 12
+      },
+      {
+        "id": "eraser-medium",
+        "name": "Medium",
+        "size": 24
+      },
+      {
+        "id": "eraser-large",
+        "name": "Large",
+        "size": 48
+      }
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+export { isPromptableNodeType } from './nodeCapabilities';

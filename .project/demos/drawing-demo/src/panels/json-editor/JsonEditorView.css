@@ -1,0 +1,247 @@
+/*
+ * Prompt Compiler JSON grid — visual layer.
+ * Weight and accent color are forced here so neither Tailwind preflight
+ * nor browser UA styles can reintroduce bold / wrong orange.
+ */
+
+.json-editor,
+.json-editor * {
+  font-weight: 400 !important;
+  font-family: inherit !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.json-editor {
+  width: 100%;
+  font-size: 12px;
+  line-height: 16px;
+  color: #374151;
+  --json-editor-muted-bg: #fcfcfc;
+}
+
+.json-editor__row {
+  display: flex;
+  min-height: 24px;
+  background: transparent;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.json-editor__row:last-child {
+  border-bottom: none;
+}
+
+.json-editor__row:hover {
+  background: var(--json-editor-muted-bg);
+}
+
+.json-editor__prop {
+  width: 200px;
+  flex-shrink: 0;
+  padding: 4px 6px;
+  display: flex;
+  align-items: center;
+  user-select: none;
+  color: #374151;
+  box-sizing: border-box;
+  border-right: 1px solid #e5e7eb;
+}
+
+.json-editor__val {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  display: flex;
+  align-items: flex-start;
+  color: #374151;
+  box-sizing: border-box;
+}
+
+.json-editor__val--flush {
+  padding: 0;
+}
+
+.json-editor__expander {
+  width: 16px;
+  margin-right: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.json-editor__expander-spacer {
+  width: 16px;
+  margin-right: 4px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.json-editor__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.json-editor__actions {
+  display: inline-flex;
+  align-items: flex-start;
+  align-self: stretch;
+  padding: 2px 4px 0 0;
+  flex-shrink: 0;
+}
+
+.json-editor__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #4b5563;
+  cursor: default;
+  line-height: 0;
+}
+
+.json-editor__action:hover {
+  background: #f3f4f6;
+}
+
+.json-editor__mark {
+  display: inline-block;
+  width: 10px;
+  height: 15px;
+  margin-right: 6px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.json-editor__mark--struct {
+  width: 12px;
+  height: 16px;
+}
+
+.json-editor__mark svg {
+  display: block;
+  width: 10px;
+  height: 15px;
+}
+
+.json-editor__mark--struct svg {
+  width: 12px;
+  height: 16px;
+}
+
+.json-editor__mark svg text {
+  font-weight: 700 !important;
+}
+
+.json-editor__val--editable {
+  cursor: text;
+  width: 100%;
+}
+
+.json-editor__val--editing {
+  background: #fff1eb;
+  outline: 1px dotted #9ca3af;
+  outline-offset: -1px;
+}
+
+.json-editor__input {
+  width: 100%;
+  min-width: 0;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.json-editor__table td.json-editor__cell--editable {
+  cursor: text;
+}
+
+.json-editor__table td.json-editor__cell--editing {
+  background: #fff1eb;
+  outline: 1px dotted #9ca3af;
+  outline-offset: -1px;
+}
+
+/* Accent = same literal paint as .global-panel-scroll-accent thumb */
+.json-editor__accent {
+  color: #ff5a1f !important;
+  -webkit-text-fill-color: #ff5a1f !important;
+}
+
+.json-editor__muted {
+  color: #9ca3af !important;
+  -webkit-text-fill-color: #9ca3af !important;
+}
+
+.json-editor__inline {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.json-editor__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.json-editor__table td {
+  padding: 4px 6px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #374151;
+  vertical-align: middle;
+  border-left: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.json-editor__table td:first-child {
+  border-left: none;
+}
+
+.json-editor__table tr:last-child td {
+  border-bottom: none;
+}
+
+.json-editor__table-head td {
+  background: var(--json-editor-muted-bg);
+}
+
+.json-editor__table-index {
+  width: 40px;
+  text-align: center !important;
+  color: #9ca3af !important;
+  -webkit-text-fill-color: #9ca3af !important;
+}
+
+.json-editor__table-index--head {
+  background: var(--json-editor-muted-bg);
+  color: #374151 !important;
+  -webkit-text-fill-color: #374151 !important;
+}
+
+.json-editor__empty {
+  padding: 4px 6px;
+  color: #9ca3af !important;
+  -webkit-text-fill-color: #9ca3af !important;
+}
