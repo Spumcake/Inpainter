@@ -1,12 +1,17 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { join } from "node:path";
 
+import type { Presentation, StudioEvent } from "../session-contract";
+import { SessionController } from "./session";
+
 app.commandLine.appendSwitch("ozone-platform-hint", "auto");
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 }
+
+const session = new SessionController();
 
 function focusStudioWindow(): void {
   const existing = BrowserWindow.getAllWindows()[0];
@@ -37,12 +42,25 @@ function createWindow(): void {
     },
   });
 
+  const sendPresentation = (presentation: Presentation): void => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("studio:presentation", presentation);
+    }
+  };
+  const unsubscribe = session.subscribe(sendPresentation);
+
+  mainWindow.on("closed", () => {
+    unsubscribe();
+  });
+
   mainWindow.webContents.on("did-fail-load", (_event, code, description, url) => {
     console.error(`Failed to load ${url}: ${code} ${description}`);
   });
 
   mainWindow.webContents.on("did-finish-load", () => {
     console.log(`Studio window ready: ${mainWindow.getTitle()}`);
+    sendPresentation(session.getPresentation());
+    void session.boot();
   });
 
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
@@ -61,6 +79,12 @@ if (gotTheLock) {
     ipcMain.handle("studio:quit", () => {
       app.quit();
     });
+    ipcMain.handle("studio:dispatch", (_event, next: StudioEvent) => {
+      return session.dispatch(next);
+    });
+    ipcMain.handle("studio:presentation", () => {
+      return session.getPresentation();
+    });
 
     createWindow();
 
@@ -73,6 +97,7 @@ if (gotTheLock) {
 }
 
 app.on("window-all-closed", () => {
+  session.dispose();
   if (process.platform !== "darwin") {
     app.quit();
   }

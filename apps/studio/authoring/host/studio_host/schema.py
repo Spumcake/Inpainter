@@ -5,7 +5,7 @@ from typing import Any
 
 from inpainter.errors import CoreError
 
-from cli.paths import schema_dir
+from studio_host.paths import schema_dir
 
 
 def apply_defaults(name: str, payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -30,4 +30,16 @@ def apply_defaults(name: str, payload: dict[str, Any] | None) -> dict[str, Any]:
             result[key] = incoming[key]
         else:
             result[key] = spec.get("default")
+    feed_spec = properties.get("feed")
+    feed_default = feed_spec.get("default") if isinstance(feed_spec, dict) else None
+    if isinstance(feed_default, dict):
+        feed = result.get("feed")
+        if not isinstance(feed, dict):
+            result["feed"] = dict(feed_default)
+        else:
+            merged = dict(feed_default)
+            merged.update(feed)
+            if not isinstance(merged.get("messages"), list):
+                merged["messages"] = []
+            result["feed"] = merged
     return result

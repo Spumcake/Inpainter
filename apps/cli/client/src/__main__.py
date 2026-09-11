@@ -5,7 +5,7 @@ from inpainter.errors import CoreError
 from inpainter.operations import auth
 from inpainter.output import write_json
 
-from cli.session import launch
+from src.session import launch
 from inpainter.__main__ import invoke
 
 

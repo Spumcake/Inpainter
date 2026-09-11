@@ -1,10 +1,38 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager};
 
+#[derive(Default)]
+pub struct StudioProcesses {
+    pids: Mutex<Vec<u32>>,
+}
+
+impl StudioProcesses {
+    fn track(&self, pid: u32) {
+        self.pids.lock().unwrap_or_else(|err| err.into_inner()).push(pid);
+    }
+
+    pub fn terminate_all(&self) {
+        let mut pids = self.pids.lock().unwrap_or_else(|err| err.into_inner());
+        for pid in pids.drain(..) {
+            terminate_process_group(pid);
+        }
+    }
+}
+
+pub fn terminate_all_for_app(app: &AppHandle) {
+    if let Some(state) = app.try_state::<StudioProcesses>() {
+        state.terminate_all();
+    }
+}
+
 pub fn launch_studio_for_app(app: &AppHandle) -> Result<(), String> {
-    spawn_studio()?;
+    let pid = spawn_studio()?;
+    if let Some(state) = app.try_state::<StudioProcesses>() {
+        state.track(pid);
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
@@ -16,7 +44,7 @@ pub fn launch_studio(app: AppHandle) -> Result<(), String> {
     launch_studio_for_app(&app)
 }
 
-fn spawn_studio() -> Result<(), String> {
+fn spawn_studio() -> Result<u32, String> {
     if let Ok(bin) = std::env::var("INPAINTER_STUDIO_BIN") {
         let path = PathBuf::from(bin);
         if !path.exists() {
@@ -79,7 +107,7 @@ fn electron_bin(studio_dir: &Path) -> PathBuf {
     }
 }
 
-fn spawn_detached(mut cmd: Command) -> Result<(), String> {
+fn spawn_detached(mut cmd: Command) -> Result<u32, String> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -98,7 +126,25 @@ fn spawn_detached(mut cmd: Command) -> Result<(), String> {
         cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
     }
 
-    cmd.spawn()
+    let child = cmd
+        .spawn()
         .map_err(|err| format!("failed to start Studio: {err}"))?;
-    Ok(())
+    Ok(child.id())
+}
+
+fn terminate_process_group(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGTERM);
+    }
+
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
 }

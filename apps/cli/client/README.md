@@ -24,8 +24,8 @@ Restart an already-running provider after updating its source to load conversati
 - `../schema/session.json` supplies client state defaults.
 - `../scripts/global.lua` owns boot, commands, working/idle state, completion, failure, and cancellation.
 - `../scripts/layouts/chat-assistant.lua` compiles to the input/action contract used by the client.
-- `cli/session.py` retains the state returned by Lua before effects execute.
-- `cli/app.py` renders Textual widgets and executes effects; `cli/backend.py` runs cancellable structured core commands.
+- `src/session.py` retains the state returned by Lua before effects execute.
+- `src/app.py` renders Textual widgets and executes effects; `src/backend.py` runs cancellable structured core commands.
 - `core/inpainter/operations/capabilities.py` resolves skills and invokes the generic platform endpoint. The provider constructs vendor requests.
 
 The structured operation is also available as `inpainter invoke --skill openai/discuss`, accepting a JSON parameter object on stdin. Cancellation stops the local subprocess and prevents stale responses from changing the session; it does not guarantee cancellation of already-submitted remote work.

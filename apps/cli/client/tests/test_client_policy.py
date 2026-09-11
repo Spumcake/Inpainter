@@ -1,8 +1,8 @@
 import asyncio
 import unittest
 from textual.widgets import Input
-from cli.app import ChatApp
-from cli.session import Session
+from src.app import ChatApp
+from src.session import Session
 
 class ClientPolicyTests(unittest.TestCase):
     def test_state_is_retained_and_stale_completion_ignored(self):

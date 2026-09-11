@@ -1,8 +1,8 @@
 """Client-owned state. Lua is the sole owner of its transitions."""
 from inpainter.lua_runtime import transition
 from inpainter.operations.capabilities import load_skill
-from cli.schema import apply_defaults
-from cli.paths import scripts_dir, layouts_dir
+from src.schema import apply_defaults
+from src.paths import scripts_dir, layouts_dir
 
 class Session:
     def __init__(self):
@@ -27,5 +27,5 @@ class Session:
 
 
 def launch():
-    from cli.app import ChatApp
+    from src.app import ChatApp
     ChatApp().run()

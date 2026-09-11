@@ -4,9 +4,15 @@ type SignInProps = {
   waiting?: boolean;
   error?: string | null;
   onSignIn?: () => void;
+  onSkip?: () => void;
 };
 
-export default function SignIn({ waiting = false, error = null, onSignIn }: SignInProps) {
+export default function SignIn({
+  waiting = false,
+  error = null,
+  onSignIn,
+  onSkip,
+}: SignInProps) {
   return (
     <div className="signin">
       <div className="signin-panel">
@@ -25,7 +31,7 @@ export default function SignIn({ waiting = false, error = null, onSignIn }: Sign
             >
               Sign in
             </button>
-            <button type="button" className="signin-secondary" disabled={waiting}>
+            <button type="button" className="signin-secondary" onClick={onSkip} disabled={waiting}>
               Skip
             </button>
           </div>

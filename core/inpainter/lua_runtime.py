@@ -13,6 +13,7 @@ def transition(
     script: str,
     state: Any,
     event: dict[str, Any],
+    helpers: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     path = scripts_dir / script
     try:
@@ -21,6 +22,9 @@ def transition(
         raise CoreError(f"missing lua script: {script}") from exc
 
     runtime = LuaRuntime(unpack_returned_tuples=True)
+    if helpers:
+        for name, fn in helpers.items():
+            runtime.globals()[name] = _bind_helper(runtime, fn)
     try:
         runtime.execute(source)
     except Exception as exc:
@@ -41,6 +45,14 @@ def transition(
     if not isinstance(converted, dict):
         raise CoreError(f"lua transition must return a table: {script}")
     return converted
+
+
+def _bind_helper(runtime: LuaRuntime, fn: Any) -> Any:
+    def bound(*args: Any) -> Any:
+        converted = [_from_lua(arg) for arg in args]
+        return _to_lua(runtime, fn(*converted))
+
+    return bound
 
 
 def _to_lua(runtime: LuaRuntime, value: Any) -> Any:

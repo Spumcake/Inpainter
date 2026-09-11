@@ -16,9 +16,12 @@
         "title": "Inpainter",
         "width": 960,
         "height": 640,
+        "minWidth": 880,
+        "maxHeight": 700,
         "resizable": true,
         "fullscreen": false,
-        "visible": true
+        "visible": true,
+        "decorations": false
       }
     ],
     "security": {

@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "phase": {
+      "default": "boot"
+    },
+    "skill": {
+      "default": "openai/discuss"
+    },
+    "directory": {
+      "default": "unsorted"
+    },
+    "project_title": {
+      "default": "Workspace"
+    },
+    "feed": {
+      "default": {
+        "child": "idle-waiting",
+        "messages": [],
+        "request_id": 0
+      }
+    }
+  }
+}

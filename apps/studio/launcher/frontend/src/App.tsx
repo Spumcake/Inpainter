@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import AppTitleBar from "./browser/chrome/AppTitleBar";
+import WorkspaceBrowser from "./browser/WorkspaceBrowser";
 import SignIn from "./SignIn";
 import Splash from "./Splash";
 import Success from "./Success";
 
-type View = "splash" | "signin" | "opening";
+type View = "splash" | "signin" | "browser" | "opening";
 
 type AuthSessionPayload = {
   authenticated: boolean;
@@ -48,7 +50,7 @@ export default function App() {
           return;
         }
         if (session.authenticated) {
-          openStudio();
+          setView("browser");
         } else {
           setView("signin");
         }
@@ -62,7 +64,7 @@ export default function App() {
     const unlisten = listen<AuthSessionPayload>("auth-session", (event) => {
       if (event.payload.authenticated) {
         setWaiting(false);
-        openStudio();
+        setView("browser");
         return;
       }
       launching.current = false;
@@ -87,7 +89,7 @@ export default function App() {
     try {
       const session = await invoke<AuthSessionPayload>("sign_in");
       if (session.authenticated) {
-        openStudio();
+        setView("browser");
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -100,12 +102,42 @@ export default function App() {
   }
 
   if (view === "signin") {
-    return <SignIn waiting={waiting} error={error} onSignIn={handleSignIn} />;
+    return (
+      <div className="flex flex-col h-full">
+        <AppTitleBar />
+        <div className="flex-1 min-h-0">
+          <SignIn
+            waiting={waiting}
+            error={error}
+            onSignIn={handleSignIn}
+            onSkip={() => setView("browser")}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "browser") {
+    return <WorkspaceBrowser />;
   }
 
   if (view === "opening") {
-    return <Success error={error} onRetry={openStudio} />;
+    return (
+      <div className="flex flex-col h-full">
+        <AppTitleBar />
+        <div className="flex-1 min-h-0">
+          <Success error={error} onRetry={openStudio} />
+        </div>
+      </div>
+    );
   }
 
-  return <Splash />;
+  return (
+    <div className="flex flex-col h-full">
+      <AppTitleBar />
+      <div className="flex-1 min-h-0">
+        <Splash />
+      </div>
+    </div>
+  );
 }

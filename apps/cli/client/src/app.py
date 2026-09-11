@@ -10,8 +10,8 @@ from textual.containers import HorizontalGroup, VerticalGroup, VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Input, Static
 from inpainter.operations.capabilities import load_skill
-from cli.session import Session
-from cli.backend import command
+from src.session import Session
+from src.backend import command
 
 PREFIXES = {
     "user": ("❯ ", "bold #ffffff"),
