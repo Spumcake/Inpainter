@@ -22,8 +22,9 @@ PREFIXES = {
 class ChatApp(App):
     CSS = """
     Screen { background: #000000; color: #dddddd; }
-    #identity { height: auto; margin: 0 1; }
+    #identity { height: auto; margin: 0 1; display: none; }
     #conversation { height: 1fr; background: #000000; display: none; }
+    #fatal { height: 1fr; width: 1fr; content-align: center middle; text-align: center; display: none; }
     #feed { height: auto; width: 1fr; margin: 1 1 0 1; background: #000000; }
     .message { height: auto; width: 1fr; margin: 0 0 1 0; }
     #status { height: auto; margin: 0 1 1 1; color: #aaaaaa; display: none; }
@@ -42,10 +43,12 @@ class ChatApp(App):
         self.auth_task = None
         self.working_since = None
         self.status_text = ""
+        self.fatal_message = ""
         self.transcript = []
 
     def compose(self) -> ComposeResult:
         yield Static(id="identity")
+        yield Static(id="fatal")
         with VerticalScroll(id="conversation"):
             yield VerticalGroup(id="feed")
             yield Static(id="status")
@@ -58,13 +61,17 @@ class ChatApp(App):
 
     def refresh_visibility(self) -> None:
         phase = self.session.state.get("phase")
-        conversation = self.query_one("#conversation", VerticalScroll)
-        conversation.display = phase != "checking"
+        open_session = phase in ("idle", "working")
+        fatal = phase in ("blocked", "signed_out")
+        self.query_one("#identity", Static).display = open_session
+        self.query_one("#conversation", VerticalScroll).display = open_session
+        self.query_one("#fatal", Static).display = fatal
 
     def on_mount(self):
         self.set_interval(0.2, self.update_clock)
         self.dispatch({"type":"app.boot"})
-        self.query_one(Input).focus()
+        if self.session.state.get("phase") in ("idle", "working"):
+            self.query_one(Input).focus()
 
     def dispatch(self, event):
         for effect in self.session.dispatch(event):
@@ -79,7 +86,9 @@ class ChatApp(App):
             else:
                 text = Text("[...]")
             self.query_one("#identity", Static).update(Panel(text, expand=False, border_style="dim"))
-            self.query_one(Input).placeholder = self.session.layout["input"]["placeholder"]
+            prompt = self.query_one(Input)
+            prompt.placeholder = self.session.layout["input"]["placeholder"]
+            prompt.focus()
         elif kind == "ui.append":
             if effect["text"]:
                 feed = self.query_one("#feed", VerticalGroup)
@@ -93,6 +102,9 @@ class ChatApp(App):
         elif kind == "ui.clear":
             self.transcript.clear()
             self.query_one("#feed", VerticalGroup).remove_children()
+        elif kind == "ui.fatal":
+            self.fatal_message = str(effect.get("message") or "Unavailable.")
+            self.query_one("#fatal", Static).update(Text(self.fatal_message))
         elif kind == "ui.status":
             self.status_text = effect["text"]
             self.working_since = time.monotonic() if effect["working"] else None

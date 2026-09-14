@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import unittest
 
-from inpainter.lua_runtime import transition
-from inpainter.paths import scripts_dir
+from inpainter.policy import transition
 from inpainter.schema import apply_defaults
 
 
 class CorePolicyTests(unittest.TestCase):
     def test_signed_out_core_is_still_healthy(self) -> None:
         result = transition(
-            scripts_dir(),
-            "global.lua",
             None,
             {
                 "type": "auth.status",
@@ -27,8 +24,6 @@ class CorePolicyTests(unittest.TestCase):
 
     def test_authenticated_status_is_healthy(self) -> None:
         result = transition(
-            scripts_dir(),
-            "global.lua",
             "unhealthy",
             {
                 "type": "auth.status",
@@ -44,8 +39,6 @@ class CorePolicyTests(unittest.TestCase):
 
     def test_crash_event_is_crashed(self) -> None:
         result = transition(
-            scripts_dir(),
-            "global.lua",
             "healthy",
             {"type": "core.crash", "error": "boom"},
         )

@@ -1,8 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { app } from "electron";
 
+import { createAuthoringPolicy, initialize } from "../../../policy/src/index.ts";
 import {
   emptyPresentation,
   type FeedMessage,
@@ -11,30 +11,25 @@ import {
   type StudioEffect,
   type StudioEvent,
 } from "../session-contract";
-import { LuaHost } from "./host";
+
+type AuthoringPolicy = Awaited<ReturnType<typeof createAuthoringPolicy>>;
 
 function authoringRoot(): string {
   return resolve(__dirname, "../../..");
+}
+
+function scriptsDir(): string {
+  return resolve(authoringRoot(), "scripts/shared");
 }
 
 function pythonBin(): string {
   if (process.env.INPAINTER_STUDIO_PYTHON) {
     return process.env.INPAINTER_STUDIO_PYTHON;
   }
-  const root = authoringRoot();
-  const unix = join(root, "host/.venv/bin/python");
-  if (existsSync(unix)) {
-    return unix;
-  }
-  const windows = join(root, "host/.venv/Scripts/python.exe");
-  if (existsSync(windows)) {
-    return windows;
-  }
   return "python3";
 }
 
 export class SessionController {
-  private host: LuaHost | null = null;
   private state: Record<string, unknown> = {};
   private presentation: Presentation = emptyPresentation();
   private readonly queue: StudioEvent[] = [];
@@ -43,6 +38,7 @@ export class SessionController {
   private invokeGeneration = 0;
   private readonly listeners = new Set<(presentation: Presentation) => void>();
   private readonly python = pythonBin();
+  private policy: AuthoringPolicy | null = null;
 
   getPresentation(): Presentation {
     return this.presentation;
@@ -56,14 +52,8 @@ export class SessionController {
   }
 
   async boot(): Promise<void> {
-    if (!this.host) {
-      this.host = LuaHost.start(this.python);
-    }
-    const initial = await this.host.request({ op: "init" });
-    if (!initial.state) {
-      throw new Error("Studio Lua host returned no session state");
-    }
-    this.state = initial.state;
+    await this.ensurePolicy();
+    this.state = initialize() as Record<string, unknown>;
     this.presentation = emptyPresentation();
     await this.dispatch({ type: "app.boot" });
   }
@@ -75,8 +65,6 @@ export class SessionController {
 
   dispose(): void {
     this.killInvoke();
-    this.host?.dispose();
-    this.host = null;
   }
 
   private emit(): void {
@@ -94,25 +82,26 @@ export class SessionController {
     try {
       while (this.queue.length > 0) {
         const event = this.queue.shift();
-        if (!event || !this.host) {
+        if (!event) {
           continue;
         }
-        const result = await this.host.request({
-          op: "transition",
-          state: this.state,
-          event,
-        });
-        if (!result.state) {
-          throw new Error("Studio Lua host returned no session state");
+        const policy = await this.ensurePolicy();
+        const result = policy.dispatch(this.state, event);
+        if (!result.state || typeof result.state !== "object") {
+          throw new Error("Studio policy returned no session state");
         }
-        this.state = result.state;
+        this.state = result.state as Record<string, unknown>;
         this.applyEffects(result.effects ?? []);
         this.emit();
       }
     } catch (error) {
       console.error(error);
-      this.presentation.feed.notice = error instanceof Error ? error.message : String(error);
-      this.presentation.feed.submitAvailable = false;
+      this.presentation = {
+        ...this.presentation,
+        header: { ...this.presentation.header, actions: [] },
+        feed: { ...this.presentation.feed, child: "fatal", submitAvailable: false, working: false },
+        fatal: error instanceof Error ? error.message : String(error),
+      };
       this.emit();
     } finally {
       this.pumping = false;
@@ -146,6 +135,7 @@ export class SessionController {
             messages: asMessages(effect.messages),
             working: Boolean(effect.working),
           },
+          fatal: "",
         };
       } else if (kind === "ui.append") {
         const text = String(effect.text ?? "");
@@ -165,6 +155,21 @@ export class SessionController {
         this.presentation = {
           ...this.presentation,
           feed: { ...this.presentation.feed, messages: [] },
+        };
+      } else if (kind === "ui.fatal") {
+        this.presentation = {
+          ...this.presentation,
+          header: { ...this.presentation.header, actions: [] },
+          feed: {
+            ...this.presentation.feed,
+            child: "fatal",
+            submitAvailable: false,
+            notice: "",
+            messages: [],
+            working: false,
+          },
+          fatal: String(effect.message ?? ""),
+          status: { text: "", working: false },
         };
       } else if (kind === "ui.status") {
         this.presentation = {
@@ -186,6 +191,13 @@ export class SessionController {
         throw new Error(`Unsupported client effect: ${kind}`);
       }
     }
+  }
+
+  private async ensurePolicy(): Promise<AuthoringPolicy> {
+    if (!this.policy) {
+      this.policy = await createAuthoringPolicy(scriptsDir());
+    }
+    return this.policy;
   }
 
   private async runAuth(): Promise<void> {

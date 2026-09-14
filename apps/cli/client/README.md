@@ -22,9 +22,9 @@ Restart an already-running provider after updating its source to load conversati
 ## Ownership
 
 - `../schema/session.json` supplies client state defaults.
-- `../scripts/global.lua` owns boot, commands, working/idle state, completion, failure, and cancellation.
-- `../scripts/layouts/chat-assistant.lua` compiles to the input/action contract used by the client.
-- `src/session.py` retains the state returned by Lua before effects execute.
+- `../scripts/global.ts` owns boot, commands, working/idle state, completion, failure, and cancellation.
+- `../scripts/layouts/chat-assistant.ts` compiles to the input/action contract used by the client.
+- `src/session.py` retains the state returned by policy before effects execute.
 - `src/app.py` renders Textual widgets and executes effects; `src/backend.py` runs cancellable structured core commands.
 - `core/inpainter/operations/capabilities.py` resolves skills and invokes the generic platform endpoint. The provider constructs vendor requests.
 

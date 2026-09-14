@@ -1,8 +1,10 @@
-"""Client-owned state. Lua is the sole owner of its transitions."""
-from inpainter.lua_runtime import transition
+"""Client-owned state. Policy modules are the sole owner of transitions."""
+from pathlib import Path
+
 from inpainter.operations.capabilities import load_skill
+from inpainter.ts_policy import run_transition
 from src.schema import apply_defaults
-from src.paths import scripts_dir, layouts_dir
+from src.paths import policy_dir
 
 class Session:
     def __init__(self):
@@ -12,16 +14,15 @@ class Session:
 
     @staticmethod
     def compile_layout(skill):
-        from pathlib import Path
         name = skill["layout"]
         if Path(name).name != name:
             raise ValueError("Invalid layout name")
-        return transition(layouts_dir(), name + ".lua", None, {"type":"schema"})["payload"]
+        return run_transition(policy_dir(), f"layouts/{name}", None, {"type": "schema"})["payload"]
 
     def dispatch(self, event):
-        result = transition(scripts_dir(), "global.lua", self.state, event)
+        result = run_transition(policy_dir(), "global", self.state, event)
         if not isinstance(result.get("state"), dict):
-            raise ValueError("Client Lua must return session state")
+            raise ValueError("Client policy must return session state")
         self.state = result["state"]
         return result.get("effects") or []
 

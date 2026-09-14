@@ -172,7 +172,7 @@ These responsibilities must remain distinct.
 
 Every decision has one owner.
 
-If Lua decides session behavior, Python must not contain a fallback copy of that behavior.
+If TypeScript modules in a `scripts/` tree decide session behavior, Python and React must not contain a fallback copy of that behavior.
 
 If a layout owns capability presentation, React must not independently encode the same capability-specific rules.
 
@@ -206,7 +206,7 @@ Work on the smallest functional slice that proves the architecture.
 
 Do not create speculative infrastructure for future requirements.
 
-For example, implementing application boot means dispatching the real `app.boot` event, letting Lua return the next state and effects, persisting that state, executing those effects, and testing authenticated and unauthenticated boot.
+For example, implementing application boot means dispatching the real `app.boot` event, letting policy return the next state and effects, persisting that state, executing those effects, and testing authenticated and unauthenticated boot.
 
 Stop there.
 
@@ -229,8 +229,9 @@ Ask:
 ### Session
 
 * Did Python gain a branch deciding session state or lifecycle behavior?
-* Did Python begin interpreting Lua policy?
-* Could the requested session behavior still be changed by editing Lua without changing Python policy?
+* Did the host begin interpreting policy?
+* Could the requested session behavior still be changed by editing TypeScript modules in the `scripts/` tree without changing host or React code?
+* Did the working chrome appear after policy declared a fatal condition?
 
 ### Capability architecture
 

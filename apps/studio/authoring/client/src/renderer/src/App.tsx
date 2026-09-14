@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ChatAssistant } from "./components/ChatAssistant";
+import { FatalMessage } from "./components/FatalMessage";
 import { IdleWaiting } from "./components/IdleWaiting";
 import type { Presentation } from "../../session-contract";
 
@@ -35,15 +36,22 @@ export default function App() {
     void window.studio.dispatch(event);
   };
 
+  const child = presentation?.feed.child ?? "none";
+  const working = child === "idle-waiting" || child === "chat-assistant";
+
   return (
     <div className="ca-root h-screen font-sans antialiased">
       <div className="flex h-screen flex-col overflow-hidden bg-canvas text-fg">
-        <AppHeader
-          title={presentation?.header.title ?? "Workspace"}
-          actions={presentation?.header.actions ?? []}
-          onAction={(action) => dispatch({ type: "header.action", action })}
-        />
-        {presentation?.feed.child === "chat-assistant" ? (
+        {working ? (
+          <AppHeader
+            title={presentation?.header.title ?? "Workspace"}
+            actions={presentation?.header.actions ?? []}
+            onAction={(action) => dispatch({ type: "header.action", action })}
+          />
+        ) : null}
+        {child === "fatal" ? (
+          <FatalMessage message={presentation?.fatal || "Unavailable."} />
+        ) : child === "chat-assistant" && presentation ? (
           <ChatAssistant
             messages={presentation.feed.messages}
             placeholder={presentation.feed.placeholder}
@@ -53,7 +61,7 @@ export default function App() {
             onSubmit={(text) => dispatch({ type: "input.submitted", text })}
             onCancel={() => dispatch({ type: "request.cancel" })}
           />
-        ) : (
+        ) : child === "idle-waiting" ? (
           <IdleWaiting
             title={presentation?.feed.title ?? "Workspace"}
             placeholder={presentation?.feed.placeholder ?? "Ask Inpainter"}
@@ -61,7 +69,7 @@ export default function App() {
             notice={presentation?.feed.notice ?? ""}
             onSubmit={(text) => dispatch({ type: "input.submitted", text })}
           />
-        )}
+        ) : null}
       </div>
     </div>
   );

@@ -21,7 +21,6 @@ packages = ["src"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "../schema" = "src/schema"
-"../scripts" = "src/scripts"
 
 [tool.uv.sources]
 inpainter-core = { path = "../../../core", editable = true }

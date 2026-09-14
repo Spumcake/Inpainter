@@ -148,14 +148,14 @@ This is how the application decides what happens next.
 ```text
 event + current state
         ↓
-Lua transition
+TypeScript policy transition
         ↓
 new state + effects
         ↓
-Python execution
+Python / Electron execution
 ```
 
-Capability invocation is not session dispatch. Session dispatch is how Python reports that something happened so session-policy Lua can choose the next state and effects.
+Capability invocation is not session dispatch. Session dispatch is how the host reports that something happened so session-policy modules can choose the next state and effects.
 
 ---
 
@@ -189,9 +189,9 @@ Skills do not own UI implementation, session policy, provider implementation, or
 
 **Location:** `skills/<provider>/<name>.json` for identity and wiring, with optional `<name>.md` for prompt-engineering content. Built-in skills ship in the repository `skills/` directory. Project-scoped and machine-scoped skills are additional storage tiers; see Open Questions.
 
-## Layout Lua — Capability Presentation Layer
+## Layout policy — Capability Presentation Layer
 
-Layout scripts define how a capability manifests inside Inpainter.
+Layout modules define how a capability manifests inside Inpainter.
 
 They may describe:
 
@@ -216,43 +216,43 @@ Capability schemas are compiled representations of layout declarations.
 
 They provide a common contract consumed by React, the agent, and the CLI. A schema may describe inputs, outputs, actions, presentation metadata, and invocation definitions.
 
-Schemas are compiled, not manually duplicated across consumers. Nothing consuming a schema should need to understand the Lua source that produced it.
+Schemas are compiled, not manually duplicated across consumers. Nothing consuming a schema should need to understand the TypeScript source that produced it.
 
-## Session Lua — Application Policy Layer
+## Session policy — Application Policy Layer
 
-Application-wide session behavior is controlled by Lua.
+Application-wide session behavior is controlled by TypeScript policy modules in each scope's `scripts/` tree.
 
 This includes what happens on boot, after authentication, when work begins, when work completes, after failure, and which session state follows an event.
 
-Python defines what the application can do. Lua defines what the application does in response to events.
+Python and Electron hosts define what the application can do. Policy modules define what the application does in response to events.
 
 The runtime contract is:
 
 ```text
 event + current state
         ↓
-Lua transition
+TypeScript transition
         ↓
 new state + effects
         ↓
-Python execution
+host execution
 ```
 
 Conceptually:
 
-```lua
+```ts
 transition(state, event)
     -> {
-        state = ...,
-        effects = {...}
+        state: ...,
+        effects: [...],
     }
 ```
 
 Session state is not UI state. Showing a view is only one possible effect.
 
-Layout Lua and session Lua are two scopes that share a transition contract. A layout owns what an opened entry shows. App-wide session policy owns boot, authentication, and idle or working. They are not the same script.
+Layout policy and session policy are two scopes that share a transition contract. A layout owns what an opened entry shows. App-wide session policy owns boot, authentication, and idle or working. They are not the same module.
 
-**Location:** `apps/cli/scripts/state/` — this directory is the intended home for session-policy Lua. It does not exist yet.
+**Location:** `core/scripts/` for core operational policy; `apps/cli/scripts/` for the terminal client; `apps/studio/authoring/scripts/shared/` for Studio authoring. `policy/` packages load that tree, apply the host contract, and serve stdio or in-process dispatch. Shared loading, delegation, and stdio hosting live in `packages/policy-runtime/`.
 
 ## Core UI — Application Interface Layer
 
@@ -295,7 +295,7 @@ Python implements underlying mechanisms.
 
 Examples include image processing, video processing, audio processing, filesystem operations, API clients, authentication mechanisms, async workers, external tools, local model integrations, provider implementations, and computational workflows.
 
-Python implements what Lua, CLI operations, or providers request. It does not absorb policy merely because implementing it there is convenient.
+Python implements what policy modules, CLI operations, or providers request. It does not absorb policy merely because implementing it there is convenient.
 
 ## Platform API — Remote Services and Routing Layer
 
@@ -327,6 +327,8 @@ The agent should increasingly operate on the project rather than treat every gen
 
 On desktop, a local project folder is the working context. On the web, the same project concept is hosted. See Open Questions for how local folders and hosted records bind to each other.
 
+Desktop workspace identity and display name live in `.inpainter/workspace.json` inside the workspace (`schema_version`, `id`, `name`). The launcher Rust workspace module creates and reads this manifest. Its machine-local registry stores locations and last-observed metadata only; an accessible workspace manifest is authoritative. See `.project/audits/9-13-workspace-manifest.md` for legacy migration and import behavior.
+
 ## Data Model Schemas — Persistent Identity Layer
 
 Data model schemas define persistent things Inpainter must recognize and reference.
@@ -343,7 +345,7 @@ Session policy has a particularly strict boundary.
 
 Python detects facts and dispatches them as events. Examples of facts include application booted, authentication completed, request started, request completed, and request failed.
 
-Lua decides what those facts mean.
+Policy modules decide what those facts mean.
 
 ```text
 app.boot
@@ -352,7 +354,7 @@ authenticated = false
 
         ↓
 
-Lua
+TypeScript policy
 
         ↓
 
@@ -360,19 +362,25 @@ state = signed_out
 effect = ui.show("signed-out")
 ```
 
-Python then mechanically executes the returned effect. It does not independently reproduce the same decision.
+The host then mechanically executes the returned effect. It does not independently reproduce the same decision.
 
 The first states with defined meaning are:
 
 ```text
+checking
+blocked
 signed_out
 idle
 working
 ```
 
-`error` is a possible later state. It has no transition contract yet. The state set should stay small and represent meaningful application conditions rather than every UI variation.
+`checking` waits for the core health and auth fact. The working chrome does not load yet.
 
-Application session state is not the same thing as auth credentials. Credentials are tokens Python can read. Session state is the application's current condition, chosen by Lua.
+`blocked` and `signed_out` are fatal session conditions. Policy emits `ui.fatal`. The host shows only that message. See `.project/audits/9-14-session-health-and-fatal-errors.md`.
+
+The state set should stay small and represent meaningful application conditions rather than every UI variation.
+
+Application session state is not the same thing as auth credentials. Credentials are tokens the host can read. Session state is the application's current condition, chosen by policy.
 
 ## Contracted events
 
@@ -395,7 +403,7 @@ session.reset
 
 ## Effects
 
-Lua returns a declarative list of effects. Python executes them mechanically.
+Policy modules return a declarative list of effects. The host executes them mechanically.
 
 A view is an effect. It is not the application state machine. A transition might show a view, focus an input, append a result, start an operation, or restore data.
 
@@ -410,13 +418,18 @@ skills/
     <name>.md            prompt-engineering content
 
 apps/cli/
-  core/                  CLI operations, skill loading,
-                         layout compilation, session runtime,
-                         effect execution, REPL
-  api/                   platform API clients
-  scripts/
-    layouts/             capability presentation + entry state
-    state/               app-wide session-policy Lua
+  client/                terminal UI and effect execution
+  policy/                policy loader and stdio host
+  scripts/               session and layout policy modules
+  schema/                client state defaults
+
+packages/
+  policy-runtime/        shared policy loading, delegation, stdio host
+
+core/
+  inpainter/             operations, auth, persistence, policy spawn
+  policy/                policy loader and stdio host
+  scripts/               core operational policy
 
 operations/
   api/                   generic remote invoke routing
@@ -428,9 +441,8 @@ providers/
     app/                 provider implementation
 
 apps/studio/
-  authoring/             desktop authoring UI
+  authoring/             desktop authoring UI; scripts/shared is session policy; policy/ is the loader
   launcher/              desktop project and machine management
-  operations/
 
 apps/web/                 web application
 ```
@@ -471,7 +483,9 @@ These are not settled architecture. They are discussions that later work should 
 
 * Skill identity, class versus layout, built-in versus user-authored skills, and the three skill storage tiers: `.project/audits/9-8-skill-component-architecture.md`
 * Hosted entries versus local files, project-to-folder binding, and produced-asset storage: `.project/audits/9-8-data-model-and-storage.md`
-* Session-policy Lua in more detail, including the first `app.boot` slice: `.project/audits/9-8-lua-controlled-session.md`
+* Session health, fatals, and when to load the working UI: `.project/audits/9-14-session-health-and-fatal-errors.md`
+* Drop-in TypeScript script trees and why `scripts/` is the authoring surface: `.project/audits/9-14-drop-in-typescript-script-trees.md`
+* Session-policy history, including the first `app.boot` slice: `.project/audits/9-8-lua-controlled-session.md`
 * Launcher, Studio shell, and how the agent workspace sits inside the desktop surface: `.project/audits/9-7-studio-and-launcher-design-flow.md`
 * Identity, auth, and the relationship between `inpainter.app` and the desktop client: `.project/audits/9-7-identity-and-auth.md`
 * Hosted data plane (Supabase, R2, what stays on Cloudflare): `.project/audits/9-5-platform-data-plane.md`

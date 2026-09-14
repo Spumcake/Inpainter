@@ -72,21 +72,15 @@ class InteractiveTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(app.working_since)
             self.assertTrue(app.is_running)
 
-    async def test_signed_out_help_and_reauthentication(self):
-        count = 0
+    async def test_signed_out_shows_fatal_message(self):
         async def backend(*args, params=None):
-            nonlocal count
-            count += 1
-            return {'authenticated':count > 1}
+            return {'authenticated': False}
         app = ChatApp(backend)
         async with app.run_test() as pilot:
             await pilot.pause()
-            self.assertEqual(app.session.state['phase'],'signed_out')
-            for text in ('hello','/?','/auth'):
-                app.query_one(Input).value = text
-                await pilot.press('enter')
-                await pilot.pause()
-            self.assertEqual(count,2)
-            self.assertEqual(app.session.state['phase'],'idle')
-            self.assertTrue(any('/new' in text for _,text in app.transcript))
-            app.save_screenshot('/tmp/inpainter-cli.svg')
+            self.assertEqual(app.session.state['phase'], 'signed_out')
+            fatal = app.query_one('#fatal')
+            self.assertTrue(fatal.display)
+            self.assertEqual(app.fatal_message, 'Not authenticated.')
+            self.assertFalse(app.query_one('#conversation').display)
+            self.assertFalse(app.query_one('#identity').display)

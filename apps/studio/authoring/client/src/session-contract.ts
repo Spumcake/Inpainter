@@ -20,7 +20,7 @@ export type Presentation = {
     actions: HeaderAction[];
   };
   feed: {
-    child: "idle-waiting" | "chat-assistant";
+    child: "none" | "idle-waiting" | "chat-assistant" | "fatal";
     title: string;
     placeholder: string;
     submitAvailable: boolean;
@@ -28,6 +28,7 @@ export type Presentation = {
     messages: FeedMessage[];
     working: boolean;
   };
+  fatal: string;
   status: {
     text: string;
     working: boolean;
@@ -43,7 +44,7 @@ export function emptyPresentation(): Presentation {
   return {
     header: { title: "Workspace", phase: "boot", actions: [] },
     feed: {
-      child: "idle-waiting",
+      child: "none",
       title: "Workspace",
       placeholder: "Ask Inpainter",
       submitAvailable: false,
@@ -51,6 +52,7 @@ export function emptyPresentation(): Presentation {
       messages: [],
       working: false,
     },
+    fatal: "",
     status: { text: "", working: false },
   };
 }
