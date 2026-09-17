@@ -1,10 +1,11 @@
 """Client-owned state. Policy modules are the sole owner of transitions."""
 from pathlib import Path
 
-from inpainter.operations.capabilities import load_skill
-from inpainter.ts_policy import run_transition
-from src.schema import apply_defaults
+from src.core import run_core
+from src.errors import CoreError
 from src.paths import policy_dir
+from src.policy_host import run_transition
+from src.schema import apply_defaults
 
 class Session:
     def __init__(self):
@@ -25,6 +26,13 @@ class Session:
             raise ValueError("Client policy must return session state")
         self.state = result["state"]
         return result.get("effects") or []
+
+
+def load_skill(skill_id: str) -> dict:
+    skill = run_core(["skill", "show", "--id", skill_id])
+    if not isinstance(skill, dict) or not skill.get("id"):
+        raise CoreError(f"Cannot load skill {skill_id}")
+    return skill
 
 
 def launch():

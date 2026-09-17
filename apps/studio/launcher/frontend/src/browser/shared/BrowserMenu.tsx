@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Box, FolderPlus, Plus, X, type LucideIcon } from "lucide-react";
+import { Box, Folder, FolderPlus, Pencil, Play, Plus, X, type LucideIcon } from "lucide-react";
 import type { MenuAction } from "./types";
 
 const menuIcons: Record<string, LucideIcon> = {
   plus: Plus,
+  folder: Folder,
   "folder-plus": FolderPlus,
+  play: Play,
+  pencil: Pencil,
   x: X,
 };
 

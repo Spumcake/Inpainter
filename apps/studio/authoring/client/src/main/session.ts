@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { resolve } from "node:path";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { app } from "electron";
 
 import { createAuthoringPolicy, initialize } from "../../../policy/src/index.ts";
@@ -22,11 +24,113 @@ function scriptsDir(): string {
   return resolve(authoringRoot(), "scripts/shared");
 }
 
-function pythonBin(): string {
-  if (process.env.INPAINTER_STUDIO_PYTHON) {
-    return process.env.INPAINTER_STUDIO_PYTHON;
+type CoreLaunch = {
+  command: string;
+  prefix: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+};
+
+function inpainterHome(): string {
+  return process.env.INPAINTER_HOME ? resolve(process.env.INPAINTER_HOME) : join(homedir(), ".inpainter");
+}
+
+function envFlag(value: string | undefined): boolean | undefined {
+  if (!value) {
+    return undefined;
   }
-  return "python3";
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no") {
+    return false;
+  }
+  return undefined;
+}
+
+function useSourceCore(): boolean {
+  return envFlag(process.env.INPAINTER_DEV) ?? !app.isPackaged;
+}
+
+function findCoreProject(): string {
+  if (process.env.INPAINTER_CORE_DIR) {
+    const path = resolve(process.env.INPAINTER_CORE_DIR);
+    if (existsSync(join(path, "package.json"))) {
+      return path;
+    }
+    throw new Error(`INPAINTER_CORE_DIR does not look like Inpainter core: ${path}`);
+  }
+  let current = authoringRoot();
+  while (true) {
+    const candidate = join(current, "core");
+    if (existsSync(join(candidate, "package.json"))) {
+      return candidate;
+    }
+    const parent = resolve(current, "..");
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+  throw new Error("Could not find Inpainter core source. Set INPAINTER_CORE_DIR.");
+}
+
+function sourceCoreLaunch(env: NodeJS.ProcessEnv): CoreLaunch {
+  const project = findCoreProject();
+  const tsx = resolve(project, "node_modules/.bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+  const entry = resolve(project, "src/cli.ts");
+  if (!existsSync(tsx) || !existsSync(entry)) {
+    throw new Error(`Inpainter core source is not ready at ${project}. Run pnpm install in core/.`);
+  }
+  return { command: tsx, prefix: [entry], cwd: project, env };
+}
+
+function coreEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, INPAINTER_HOME: inpainterHome() };
+  if (useSourceCore()) {
+    env.INPAINTER_DEV = "1";
+  }
+  return env;
+}
+
+function coreLaunch(): CoreLaunch {
+  const env = coreEnv();
+  if (process.env.INPAINTER_CORE_BIN) {
+    return { command: process.env.INPAINTER_CORE_BIN, prefix: [], cwd: process.cwd(), env };
+  }
+  if (useSourceCore()) {
+    return sourceCoreLaunch(env);
+  }
+  const installed = join(inpainterHome(), "bin", process.platform === "win32" ? "inpainter-core.cmd" : "inpainter-core");
+  if (existsSync(installed)) {
+    return { command: installed, prefix: [], cwd: process.cwd(), env };
+  }
+  return sourceCoreLaunch(env);
+}
+
+function clip(text: string, max = 2000): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= max) {
+    return trimmed;
+  }
+  return trimmed.slice(-max);
+}
+
+function launchSummary(launch: CoreLaunch, args: string[]): string {
+  return `${launch.command} ${[...launch.prefix, ...args].join(" ")} (cwd ${launch.cwd})`;
+}
+
+function logStudioCore(lines: string[]): void {
+  const body = [`--- studio core ${new Date().toISOString()} ---`, ...lines, ""].join("\n");
+  console.error(body);
+  try {
+    const dir = join(inpainterHome(), "logs");
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "studio-core.log"), `${body}\n`);
+  } catch (error) {
+    console.error(`Failed to write studio-core.log: ${error}`);
+  }
 }
 
 export class SessionController {
@@ -37,7 +141,6 @@ export class SessionController {
   private invokeProc: ChildProcessWithoutNullStreams | null = null;
   private invokeGeneration = 0;
   private readonly listeners = new Set<(presentation: Presentation) => void>();
-  private readonly python = pythonBin();
   private policy: AuthoringPolicy | null = null;
 
   getPresentation(): Presentation {
@@ -202,12 +305,14 @@ export class SessionController {
 
   private async runAuth(): Promise<void> {
     try {
-      const payload = await runCore(this.python, ["auth", "status"]);
+      const payload = await runCore(["auth", "status"]);
       await this.dispatch({ ...payload, type: "auth.completed" });
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logStudioCore([`auth status failed: ${message}`]);
       await this.dispatch({
         type: "auth.failed",
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       });
     }
   }
@@ -219,7 +324,10 @@ export class SessionController {
     const skill = String(effect.skill ?? "openai/discuss");
     const messages = Array.isArray(effect.messages) ? effect.messages : [];
     const last = messages[messages.length - 1] as { content?: string } | undefined;
-    const proc = spawn(this.python, ["-u", "-m", "inpainter", "invoke", "--skill", skill], {
+    const launch = coreLaunch();
+    const proc = spawn(launch.command, [...launch.prefix, "invoke", "--skill", skill], {
+      cwd: launch.cwd,
+      env: launch.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.invokeProc = proc;
@@ -253,10 +361,17 @@ export class SessionController {
       } catch (error) {
         const message =
           error instanceof Error ? error.message : String(error);
+        const reported = message.includes("JSON") ? stderr.slice(-500) || message : message;
+        logStudioCore([
+          `command: ${launchSummary(launch, ["invoke", "--skill", skill])}`,
+          `exit: ${code ?? "null"}`,
+          stderr ? `stderr: ${clip(stderr)}` : "stderr: <empty>",
+          `invoke failed: ${reported}`,
+        ]);
         void this.dispatch({
           type: "request.failed",
           request_id: requestId,
-          error: message.includes("JSON") ? stderr.slice(-500) || message : message,
+          error: reported,
         });
       }
     });
@@ -277,9 +392,35 @@ export class SessionController {
   }
 }
 
-function runCore(python: string, args: string[]): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(python, ["-u", "-m", "inpainter", ...args], {
+function runCore(args: string[]): Promise<Record<string, unknown>> {
+  return new Promise((resolvePromise, reject) => {
+    let settled = false;
+    const finish = (error: Error | null, value?: Record<string, unknown>) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolvePromise(value ?? {});
+    };
+
+    let launch: CoreLaunch;
+    try {
+      launch = coreLaunch();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logStudioCore([`command: ${args.join(" ")}`, `failed: ${message}`]);
+      finish(error instanceof Error ? error : new Error(message));
+      return;
+    }
+
+    const summary = launchSummary(launch, args);
+    const proc = spawn(launch.command, [...launch.prefix, ...args], {
+      cwd: launch.cwd,
+      env: launch.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -292,16 +433,30 @@ function runCore(python: string, args: string[]): Promise<Record<string, unknown
     proc.stderr.on("data", (chunk: string) => {
       stderr += chunk;
     });
+    proc.on("error", (error) => {
+      logStudioCore([`command: ${summary}`, `spawn error: ${error.message}`]);
+      finish(error);
+    });
     proc.on("close", (code) => {
       try {
         const body = JSON.parse(stdout) as Record<string, unknown>;
-        if (code || body.error) {
-          reject(new Error(String(body.error || "Core operation failed")));
-          return;
-        }
-        resolve(body);
+        logStudioCore([
+          `command: ${summary}`,
+          `exit: ${code ?? "null"}`,
+          stdout ? `stdout: ${clip(stdout)}` : "stdout: <empty>",
+          stderr ? `stderr: ${clip(stderr)}` : "stderr: <empty>",
+        ]);
+        finish(null, body);
       } catch {
-        reject(new Error(stderr.slice(-500) || "Core returned no valid JSON response"));
+        const message = clip(stderr) || "Core returned no valid JSON response";
+        logStudioCore([
+          `command: ${summary}`,
+          `exit: ${code ?? "null"}`,
+          stdout ? `stdout: ${clip(stdout)}` : "stdout: <empty>",
+          stderr ? `stderr: ${clip(stderr)}` : "stderr: <empty>",
+          `failed: ${message}`,
+        ]);
+        finish(new Error(message));
       }
     });
     proc.stdin.end();

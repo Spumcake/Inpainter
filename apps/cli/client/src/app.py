@@ -9,8 +9,7 @@ from textual.binding import Binding
 from textual.containers import HorizontalGroup, VerticalGroup, VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Input, Static
-from inpainter.operations.capabilities import load_skill
-from src.session import Session
+from src.session import Session, load_skill
 from src.backend import command
 
 PREFIXES = {

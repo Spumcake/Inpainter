@@ -1,0 +1,1 @@
+When the user asks what to build, the director gives them story beats. 

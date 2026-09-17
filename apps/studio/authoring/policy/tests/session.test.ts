@@ -45,11 +45,33 @@ describe("studio session policy", () => {
     expect(next.feed.messages).toEqual([]);
   });
 
-  it("treats an unhealthy core as a fatal message", () => {
-    const { state, effects } = boot(true, { crashed: true });
+  it("treats a core crash as a fatal message with the reported error", () => {
+    const { state, effects } = boot(true, { crashed: true, error: "boom" });
     expect(state.phase).toBe("blocked");
-    expect(effect(effects, "ui.fatal").message).toBe("Core unavailable.");
+    expect(effect(effects, "ui.fatal").message).toBe("boom");
     expect(effects.some((item) => item.type === "ui.feed.show")).toBe(false);
+  });
+
+  it("treats an unhealthy session as the session error, not a missing core", () => {
+    const { state, effects } = boot(false, {
+      state: "unhealthy",
+      error: "refresh failed: invalid grant",
+    });
+    expect(state.phase).toBe("blocked");
+    expect(effect(effects, "ui.fatal").message).toBe("refresh failed: invalid grant");
+  });
+
+  it("surfaces the spawn error when Studio cannot run auth status", () => {
+    let state = initialize();
+    state = dispatch(state, { type: "app.boot" }).state as ReturnType<typeof initialize>;
+    const result = dispatch(state, {
+      type: "auth.failed",
+      error: "INPAINTER_CORE_DIR does not look like Inpainter core: /tmp",
+    });
+    expect(result.state).toMatchObject({ phase: "blocked" });
+    expect(effect(result.effects ?? [], "ui.fatal").message).toBe(
+      "INPAINTER_CORE_DIR does not look like Inpainter core: /tmp",
+    );
   });
 
   it("switches to chat and invokes on submit", () => {

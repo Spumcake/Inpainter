@@ -1,0 +1,1 @@
+craft a series of prompts that produce artwork that crafts a story. 

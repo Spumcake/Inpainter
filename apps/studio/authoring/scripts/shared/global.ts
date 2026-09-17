@@ -17,6 +17,7 @@ function present(state: SessionState, helpers: Helpers): PolicyEffect[] {
 
 function fatal(state: SessionState, message: string): PolicyEffect {
   state.feed.child = "fatal";
+  state.last_error = message;
   return { type: "ui.fatal", message };
 }
 
@@ -28,11 +29,22 @@ function isFatal(state: SessionState): boolean {
   return state.phase === "blocked" || state.phase === "signed_out";
 }
 
+function eventError(event: PolicyEvent): string {
+  return typeof event.error === "string" ? event.error.trim() : "";
+}
+
+function blockedMessage(event: PolicyEvent, fallback: string): string {
+  return eventError(event) || fallback;
+}
+
 function fatalMessage(state: SessionState): string {
   if (state.phase === "signed_out") {
     return "Not authenticated.";
   }
-  return "Core unavailable.";
+  if (typeof state.last_error === "string" && state.last_error.trim()) {
+    return state.last_error.trim();
+  }
+  return "Studio could not complete the core auth check.";
 }
 
 function surface(state: SessionState, helpers: Helpers): PolicyEffect[] {
@@ -68,18 +80,28 @@ export function transition(
   }
   if (event.type === "auth.failed") {
     state.phase = "blocked";
-    return result(state, [fatal(state, "Core unavailable.")]);
+    return result(
+      state,
+      [fatal(state, blockedMessage(event, "Studio could not run core auth status."))],
+    );
   }
   if (event.type === "auth.completed") {
     if (event.state === "unhealthy" || event.crashed) {
       state.phase = "blocked";
-      return result(state, [fatal(state, "Core unavailable.")]);
+      const fallback = event.crashed ? "Core reported a crash." : "Session is unhealthy.";
+      return result(state, [fatal(state, blockedMessage(event, fallback))]);
+    }
+    if (eventError(event) && !event.authenticated) {
+      state.phase = "blocked";
+      return result(state, [fatal(state, eventError(event))]);
     }
     if (!event.authenticated) {
       state.phase = "signed_out";
+      state.last_error = "";
       return result(state, [fatal(state, "Not authenticated.")]);
     }
     state.phase = "idle";
+    state.last_error = "";
     return result(state, present(state, helpers));
   }
   if (event.type === "app.quit" || (event.type === "header.action" && event.action === "app.quit")) {

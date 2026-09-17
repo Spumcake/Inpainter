@@ -1,13 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import AppTitleBar from "./browser/chrome/AppTitleBar";
 import WorkspaceBrowser from "./browser/WorkspaceBrowser";
 import SignIn from "./SignIn";
 import Splash from "./Splash";
-import Success from "./Success";
 
-type View = "splash" | "signin" | "browser" | "opening";
+type View = "splash" | "signin" | "browser";
 
 type AuthSessionPayload = {
   authenticated: boolean;
@@ -21,21 +20,6 @@ export default function App() {
   const [view, setView] = useState<View>("splash");
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const launching = useRef(false);
-
-  function openStudio() {
-    if (launching.current) {
-      return;
-    }
-    launching.current = true;
-    setError(null);
-    setView("opening");
-    void invoke("launch_studio")
-      .catch((err) => {
-        launching.current = false;
-        setError(err instanceof Error ? err.message : String(err));
-      });
-  }
 
   useEffect(() => {
     if (!isTauri()) {
@@ -67,7 +51,6 @@ export default function App() {
         setView("browser");
         return;
       }
-      launching.current = false;
       setWaiting(false);
       setError(null);
       setView("signin");
@@ -119,17 +102,6 @@ export default function App() {
 
   if (view === "browser") {
     return <WorkspaceBrowser />;
-  }
-
-  if (view === "opening") {
-    return (
-      <div className="flex flex-col h-full">
-        <AppTitleBar />
-        <div className="flex-1 min-h-0">
-          <Success error={error} onRetry={openStudio} />
-        </div>
-      </div>
-    );
   }
 
   return (

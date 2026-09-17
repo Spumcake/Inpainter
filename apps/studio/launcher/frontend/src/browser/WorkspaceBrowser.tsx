@@ -13,10 +13,11 @@ import ProjectsBrowserView from "./projects/ProjectsBrowserView";
 import SettingsModal from "./settings/SettingsModal";
 import BrowserModal, { BrowserModalBody } from "./shared/BrowserModal";
 import {
+  addWorkspace,
+  createAgent,
   getBrowserShell,
   getDestinationContent,
-  importWorkspace,
-  launchStudio,
+  openWorkspace,
   pickDirectory,
   removeWorkspace,
 } from "./shared/browserApi";
@@ -25,7 +26,7 @@ import type {
   BrowserShellPayload,
   DestinationContent,
   DestinationId,
-  Project,
+  WorkspaceRecord,
 } from "./shared/types";
 
 function errorMessage(err: unknown): string {
@@ -43,6 +44,9 @@ export default function WorkspaceBrowser() {
   const [navigationCollapsed, setNavigationCollapsed] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState("local");
+  const [projectsRevision, setProjectsRevision] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,7 +69,7 @@ export default function WorkspaceBrowser() {
   useEffect(() => {
     if (!shell) return;
     const destinationId = activeDestination;
-    if (contentCache[destinationId]) return;
+    if (destinationId === "projects" || contentCache[destinationId]) return;
 
     let cancelled = false;
     getDestinationContent(destinationId)
@@ -90,38 +94,48 @@ export default function WorkspaceBrowser() {
     };
   }, [shell, activeDestination, contentCache]);
 
+  useEffect(() => {
+    const refresh = () => setProjectsRevision((revision) => revision + 1);
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
+
+  useEffect(() => {
+    if (!shell || activeDestination !== "projects") return;
+    let cancelled = false;
+    getDestinationContent("projects")
+      .then((payload) => {
+        if (cancelled) return;
+        setContentCache((prev) => ({ ...prev, projects: payload.content }));
+        if (payload.content.kind === "workspaceBrowser") {
+          const selectedTab = payload.content.selectedTab;
+          setActiveWorkspaceTabId((current) => current || selectedTab);
+        }
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setContentCache((prev) => ({
+          ...prev,
+          projects: { kind: "placeholder", message: errorMessage(err), actions: [] },
+        }));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [shell, activeDestination, projectsRevision]);
+
   const openSettings = () => setOpenModal("settings");
   const closeModal = () => setOpenModal(null);
 
   const refreshProjects = () => {
     setActiveDestination("projects");
-    setContentCache((prev) => {
-      const next = { ...prev };
-      delete next.projects;
-      return next;
-    });
-  };
-
-  const handleImport = async () => {
-    setActionError(null);
-    try {
-      const selected = await pickDirectory();
-      if (!selected) return;
-      await importWorkspace(selected);
-      refreshProjects();
-    } catch (err: unknown) {
-      setActionError(errorMessage(err));
-    }
+    setProjectsRevision((revision) => revision + 1);
   };
 
   const handleAction = (actionId: string, destination: DestinationId) => {
     if (actionId === "projects.new" || actionId === "installs.add") {
       setActionError(null);
       setOpenModal(actionId);
-      return;
-    }
-    if (actionId === "projects.import") {
-      void handleImport();
       return;
     }
     setActiveDestination(destination);
@@ -135,24 +149,60 @@ export default function WorkspaceBrowser() {
     handleAction(actionId, activeDestination);
   };
 
-  const handleProjectCreated = () => {
+  const handleProjectCreated = (workspace: WorkspaceRecord) => {
     setOpenModal(null);
     setActionError(null);
+    setActiveWorkspaceTabId(workspace.id);
     refreshProjects();
   };
 
-  const handleRowAction = (actionId: string, project: Project) => {
-    if (actionId !== "projects.remove") return;
+  const handleAddWorkspace = async () => {
     setActionError(null);
-    void removeWorkspace(project.id)
-      .then(() => refreshProjects())
-      .catch((err: unknown) => setActionError(errorMessage(err)));
+    try {
+      const selected = await pickDirectory();
+      if (!selected) return;
+      const workspace = await addWorkspace(selected);
+      setActiveWorkspaceTabId(workspace.id);
+      refreshProjects();
+    } catch (err: unknown) {
+      setActionError(errorMessage(err));
+    }
   };
 
-  const handleOpenProject = () => {
-    void launchStudio().catch((err: unknown) => {
+  const handleRemoveWorkspace = async (id: string) => {
+    setActionError(null);
+    try {
+      await removeWorkspace(id);
+      if (activeWorkspaceTabId === id) {
+        setActiveWorkspaceTabId("");
+      }
+      refreshProjects();
+    } catch (err: unknown) {
       setActionError(errorMessage(err));
-    });
+    }
+  };
+
+  const handleCreateAgent = async (workspaceId: string, directory: string) => {
+    setActionError(null);
+    try {
+      await createAgent({ workspaceId, directory });
+      refreshProjects();
+    } catch (err: unknown) {
+      setActionError(errorMessage(err));
+    }
+  };
+
+  const launchWorkspace = (workspace: { id: string; path: string }) => {
+    if (opening) return;
+    setActionError(null);
+    setOpening(true);
+    void openWorkspace({ id: workspace.id, path: workspace.path })
+      .catch((err: unknown) => {
+        setActionError(errorMessage(err));
+      })
+      .finally(() => {
+        setOpening(false);
+      });
   };
 
   const shellReady = shell !== null;
@@ -185,14 +235,19 @@ export default function WorkspaceBrowser() {
           content={destinationContent}
           error={shellError}
           actionError={actionError}
+          opening={opening}
+          activeWorkspaceTabId={activeWorkspaceTabId}
           onPlaceholderAction={handlePlaceholderAction}
-          onOpenProject={handleOpenProject}
-          onRowAction={handleRowAction}
+          onTabChange={setActiveWorkspaceTabId}
+          onAddWorkspace={() => void handleAddWorkspace()}
+          onRemoveWorkspace={(id) => void handleRemoveWorkspace(id)}
+          onCreateAgent={(id, directory) => void handleCreateAgent(id, directory)}
+          onOpenWorkspace={launchWorkspace}
         />
 
         {openModal === "settings" ? <SettingsModal onClose={closeModal} /> : null}
         {openModal === "projects.new" ? (
-          <BrowserModal title="New workspace" onClose={closeModal} className="w-[520px] h-auto">
+          <BrowserModal title="New Workspace" onClose={closeModal} className="w-[520px] h-auto">
             <CreateProjectForm onCreated={handleProjectCreated} />
           </BrowserModal>
         ) : null}
@@ -211,17 +266,27 @@ function DestinationPlane({
   content,
   error,
   actionError,
+  opening,
+  activeWorkspaceTabId,
   onPlaceholderAction,
-  onOpenProject,
-  onRowAction,
+  onTabChange,
+  onAddWorkspace,
+  onRemoveWorkspace,
+  onCreateAgent,
+  onOpenWorkspace,
 }: {
   destination: DestinationId;
   content: DestinationContent | undefined;
   error: string | null;
   actionError: string | null;
+  opening: boolean;
+  activeWorkspaceTabId: string;
   onPlaceholderAction: (actionId: string) => void;
-  onOpenProject: () => void;
-  onRowAction: (actionId: string, project: Project) => void;
+  onTabChange: (id: string) => void;
+  onAddWorkspace: () => void;
+  onRemoveWorkspace: (id: string) => void;
+  onCreateAgent: (workspaceId: string, directory: string) => void;
+  onOpenWorkspace: (workspace: { id: string; path: string }) => void;
 }) {
   if (error && !content) {
     return (
@@ -232,16 +297,21 @@ function DestinationPlane({
   }
 
   if (!content) {
-    if (destination === "installs") return <InstallsListSkeleton />;
+    if (destination === "installs" || destination === "projects") return <InstallsListSkeleton />;
     return <PlaceholderDestinationSkeleton />;
   }
 
   const body =
-    content.kind === "table" ? (
+    content.kind === "workspaceBrowser" ? (
       <ProjectsBrowserView
         content={content}
-        onOpenProject={() => onOpenProject()}
-        onRowAction={onRowAction}
+        activeTab={activeWorkspaceTabId}
+        opening={opening}
+        onTabChange={onTabChange}
+        onAddWorkspace={onAddWorkspace}
+        onRemoveWorkspace={onRemoveWorkspace}
+        onCreateAgent={onCreateAgent}
+        onOpenWorkspace={onOpenWorkspace}
       />
     ) : content.kind === "skillBrowser" ? (
       <InstallsBrowserView content={content} />
@@ -250,7 +320,11 @@ function DestinationPlane({
     );
 
   return (
-    <div className="relative flex-1 flex min-w-0">
+    <div
+      className={`relative flex min-w-0 flex-1 transition-opacity duration-200 ${
+        opening ? "pointer-events-none opacity-40" : "opacity-100"
+      }`}
+    >
       {body}
       {actionError ? (
         <p className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded bg-black/60 px-3 py-1.5 text-sm text-red-400">

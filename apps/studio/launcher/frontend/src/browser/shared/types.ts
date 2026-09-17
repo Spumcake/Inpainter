@@ -52,29 +52,51 @@ export type BrowserShellPayload = {
   };
 };
 
-export type SearchConfig = {
-  placeholder: string;
-  scope: string;
-};
-
-export type TableColumn = {
-  key: string;
-  label: string;
-};
-
-export type Conversation = {
-  name: string;
-  modified: string;
-  size: string;
-};
-
-export type Project = {
+export type WorkspaceAgent = {
   id: string;
   name: string;
+  directory?: string;
+  status?: string;
+  modified?: string;
+};
+
+export type WorkspaceTool = {
+  id: string;
+  label: string;
   path: string;
-  modified: string;
-  size: string;
-  conversations: Conversation[];
+};
+
+export type WorkspaceTreeNode = {
+  id: string;
+  label: string;
+  kind: "workspace" | "folder" | "file" | string;
+  path: string;
+  agents: WorkspaceAgent[];
+  tools?: WorkspaceTool[];
+  children?: WorkspaceTreeNode[];
+};
+
+export type WorkspaceBrowserTab = {
+  id: string;
+  label: string;
+  builtin?: boolean;
+  path?: string;
+  agents: WorkspaceAgent[];
+  tools?: WorkspaceTool[];
+};
+
+export type WorkspaceBrowserPane = {
+  tree: WorkspaceTreeNode[];
+  emptyMessage: string;
+  emptyDescription: string;
+};
+
+export type WorkspaceBrowserDestinationContent = {
+  kind: "workspaceBrowser";
+  tabs: WorkspaceBrowserTab[];
+  selectedTab: string;
+  canAddTab: boolean;
+  panes: Record<string, WorkspaceBrowserPane>;
 };
 
 export type SkillTreeNode = {
@@ -82,6 +104,7 @@ export type SkillTreeNode = {
   label: string;
   kind: "folder" | "skill" | string;
   children?: SkillTreeNode[];
+  path?: string;
   title?: string | null;
   description?: string | null;
 };
@@ -104,15 +127,6 @@ export type SkillBrowserDestinationContent = {
   panes: Record<string, SkillBrowserPane>;
 };
 
-export type TableDestinationContent = {
-  kind: "table";
-  columns: TableColumn[];
-  rows: Project[];
-  search: SearchConfig;
-  rowAffordances: string[];
-  overflowMenu?: MenuAction[];
-};
-
 export type PlaceholderAction = {
   id: string;
   label: string;
@@ -130,7 +144,7 @@ export type PlaceholderDestinationContent = {
 };
 
 export type DestinationContent =
-  | TableDestinationContent
+  | WorkspaceBrowserDestinationContent
   | SkillBrowserDestinationContent
   | PlaceholderDestinationContent;
 

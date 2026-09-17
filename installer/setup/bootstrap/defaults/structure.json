@@ -1,0 +1,10 @@
+{
+  "folders": [
+    ".inpainter",
+    ".inpainter/media",
+    ".inpainter/output",
+    ".inpainter/data",
+    ".inpainter/data/canvas",
+    "sessions"
+  ]
+}

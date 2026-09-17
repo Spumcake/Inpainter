@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Folder } from "lucide-react";
-import { createWorkspace, getUserHome, pickDirectory } from "../shared/browserApi";
+import { createWorkspace, getWorkspacesDir, pickDirectory } from "../shared/browserApi";
+import type { WorkspaceRecord } from "../shared/types";
 
 type CreateProjectFormProps = {
-  onCreated: () => void;
+  onCreated: (workspace: WorkspaceRecord) => void;
 };
 
 function errorMessage(err: unknown): string {
@@ -12,41 +12,53 @@ function errorMessage(err: unknown): string {
   return "Could not create the workspace.";
 }
 
+function slugify(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/[\s_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug || "workspace";
+}
+
+function joinFolder(location: string, folder: string): string {
+  const trimmed = location.replace(/[\\/]+$/, "");
+  if (!trimmed) return folder;
+  return `${trimmed}/${folder}`;
+}
+
 export default function CreateProjectForm({ onCreated }: CreateProjectFormProps) {
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
-  const [folderName, setFolderName] = useState("workspace");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    getUserHome()
-      .then((home) => {
-        if (!cancelled && home) setLocation(home);
+    getWorkspacesDir()
+      .then((path) => {
+        if (!cancelled) setLocation(path);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        if (!cancelled) setError(errorMessage(err));
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
   const trimmedName = name.trim();
-  const trimmedLocation = location.trim();
-  const trimmedFolder = folderName.trim();
-  const canCreate = Boolean(trimmedName && trimmedLocation && trimmedFolder) && !submitting;
-  const previewPath =
-    trimmedLocation && trimmedFolder
-      ? `${trimmedLocation.replace(/[/\\]+$/, "")}/${trimmedFolder}`
-      : "";
+  const folderName = slugify(trimmedName);
+  const canCreate = Boolean(trimmedName && location.trim()) && !submitting;
 
-  const chooseLocation = async () => {
+  const onBrowse = async () => {
+    setError(null);
     try {
       const selected = await pickDirectory();
-      if (selected) {
-        setLocation(selected);
-        setError(null);
-      }
+      if (selected) setLocation(selected);
     } catch (err: unknown) {
       setError(errorMessage(err));
     }
@@ -58,12 +70,11 @@ export default function CreateProjectForm({ onCreated }: CreateProjectFormProps)
     setSubmitting(true);
     setError(null);
     try {
-      await createWorkspace({
+      const workspace = await createWorkspace({
         name: trimmedName,
-        location: trimmedLocation,
-        folderName: trimmedFolder,
+        location: location.trim(),
       });
-      onCreated();
+      onCreated(workspace);
     } catch (err: unknown) {
       setError(errorMessage(err));
     } finally {
@@ -86,39 +97,25 @@ export default function CreateProjectForm({ onCreated }: CreateProjectFormProps)
 
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-semibold text-white">Location</span>
-        <div className="flex items-center relative">
+        <div className="flex gap-2">
           <input
             type="text"
             value={location}
             onChange={(event) => setLocation(event.target.value)}
-            className="w-full bg-[#2a2a2a] border border-[#444] rounded p-2 text-sm text-neutral-200 pr-10 focus:outline-none focus:border-neutral-500"
+            className="min-w-0 flex-1 bg-[#2a2a2a] border border-[#444] rounded p-2 text-sm text-neutral-200 focus:outline-none focus:border-neutral-500"
           />
           <button
             type="button"
-            onClick={() => void chooseLocation()}
-            className="absolute right-2 p-1 text-neutral-500 hover:text-white"
-            aria-label="Choose folder"
+            onClick={() => void onBrowse()}
+            className="shrink-0 rounded border border-[#444] px-3 py-2 text-sm text-neutral-200 hover:border-neutral-400 hover:text-white"
           >
-            <Folder size={16} />
+            Browse
           </button>
         </div>
+        {trimmedName ? (
+          <span className="text-xs text-neutral-500">{joinFolder(location.trim(), folderName)}</span>
+        ) : null}
       </label>
-
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-semibold text-white">Workspace folder name</span>
-        <input
-          type="text"
-          value={folderName}
-          onChange={(event) => setFolderName(event.target.value)}
-          className="w-full bg-[#2a2a2a] border border-[#444] rounded p-2 text-sm text-neutral-200 focus:outline-none focus:border-neutral-500"
-        />
-      </label>
-
-      {previewPath ? (
-        <p className="text-xs text-neutral-500 truncate" title={previewPath}>
-          {previewPath}
-        </p>
-      ) : null}
 
       {error ? <p className="text-sm text-red-400">{error}</p> : null}
 

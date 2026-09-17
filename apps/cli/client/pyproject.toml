@@ -5,7 +5,6 @@ description = "Inpainter command-line client"
 requires-python = ">=3.12"
 dependencies = [
     "click>=8.1",
-    "inpainter-core",
     "textual>=8.2.8",
 ]
 
@@ -21,6 +20,3 @@ packages = ["src"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "../schema" = "src/schema"
-
-[tool.uv.sources]
-inpainter-core = { path = "../../../core", editable = true }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from inpainter.errors import CoreError
+from src.errors import CoreError
 
 from src.paths import schema_dir
 

@@ -90,7 +90,7 @@ Studio is not a separate product architecture. It is the desktop incarnation of 
 
 On the desktop, two processes support that incarnation:
 
-* **Launcher** (`apps/studio/launcher/`) manages projects, installs, providers, and machine-level settings, then hands a project to Studio.
+* **Launcher** (`apps/studio/launcher/`) presents setup and management, then hands a workspace to Studio. Core owns application-home initialization, configuration, and the installed command interface.
 * **Authoring** (`apps/studio/authoring/`) is the creative surface itself: agent workspace, canvas, and later drawing and animation tools.
 
 ---
@@ -126,19 +126,19 @@ Capabilities / Skills
   ↓
 Capability Schema + Layout
   ↓
-CLI Operations
+Core command
   ↓
 Platform routing when required
   ↓
-Provider / Python implementation
+Provider implementation
 ```
 
-The UI is another consumer of the same capability definitions and execution interfaces. It does not have its own path around the CLI.
+The UI is another consumer of the same capability definitions and execution interfaces. It does not have its own path around the core command.
 
 A remote operation extends this path rather than replacing it:
 
 ```text
-Skill + layout → schema → UI / agent → CLI → Python → platform API / external service
+Skill + layout → schema → UI / agent → core command → platform API / external service
 ```
 
 ## Session flow
@@ -152,7 +152,7 @@ TypeScript policy transition
         ↓
 new state + effects
         ↓
-Python / Electron execution
+Core / Electron / CLI execution
 ```
 
 Capability invocation is not session dispatch. Session dispatch is how the host reports that something happened so session-policy modules can choose the next state and effects.
@@ -224,7 +224,7 @@ Application-wide session behavior is controlled by TypeScript policy modules in 
 
 This includes what happens on boot, after authentication, when work begins, when work completes, after failure, and which session state follows an event.
 
-Python and Electron hosts define what the application can do. Policy modules define what the application does in response to events.
+The core host and Electron clients define what the application can do. Policy modules define what the application does in response to events.
 
 The runtime contract is:
 
@@ -270,32 +270,30 @@ Inpainter and Inpainter Studio should reuse the same core UI concepts wherever p
 
 ## CLI — Execution Interface
 
-The CLI is the formal execution boundary for Inpainter capabilities.
+The core command interface is the formal execution boundary for Inpainter capabilities.
 
-UI actions, agent actions, and scripted actions resolve into structured CLI operations.
+UI actions, agent actions, and scripted actions resolve into structured core operations.
 
-The CLI owns:
+The core host owns:
 
 * executable operations
 * argument validation
 * skill loading
-* layout compilation
 * session event dispatch
 * state persistence
-* effect execution
 * structured results and errors
 
-Executable capability behavior is accessible through a CLI operation. The UI and agent do not import implementation modules directly.
+Executable capability behavior is accessible through a core command. The UI and agent do not import implementation modules directly.
 
-**Location:** `apps/cli/core/` for operations, skill loading, layout compilation, session runtime, effect execution, and the REPL. `apps/cli/api/` for platform API clients.
+**Location:** `core/src/` for operations, skill loading, policy dispatch, and the command entry. `apps/cli/client/` is the terminal UI. `apps/cli/api/` is not used; platform API clients live in `operations/api/`.
 
-## Python — Mechanism and Implementation Layer
+## Core Host — Mechanism and Implementation Layer
 
-Python implements underlying mechanisms.
+The TypeScript/Node core implements shared operations: authentication, encrypted session storage, skill loading, generic platform invoke, schema defaults, operational-policy dispatch, and application-home initialization.
 
-Examples include image processing, video processing, audio processing, filesystem operations, API clients, authentication mechanisms, async workers, external tools, local model integrations, provider implementations, and computational workflows.
+It implements what policy modules request. It does not absorb policy merely because implementing it there is convenient. Provider-side mechanisms may still use other runtimes; those belong with the provider, not in core.
 
-Python implements what policy modules, CLI operations, or providers request. It does not absorb policy merely because implementing it there is convenient.
+Application home is `INPAINTER_HOME` or `~/.inpainter`. Auth credentials remain at `$XDG_CONFIG_HOME/spumcake/inpainter/auth`. Clients invoke `~/.inpainter/bin/inpainter-core` rather than reconstructing those paths.
 
 ## Platform API — Remote Services and Routing Layer
 
@@ -335,7 +333,7 @@ Data model schemas define persistent things Inpainter must recognize and referen
 
 These may include projects, assets, settings, tools, components, placement, and persistent relationships.
 
-Identity is explicit. Persistent concepts should not depend on UI position, filenames, Python object identity, or other incidental implementation details.
+Identity is explicit. Persistent concepts should not depend on UI position, filenames, host object identity, or other incidental implementation details.
 
 ---
 
@@ -343,7 +341,7 @@ Identity is explicit. Persistent concepts should not depend on UI position, file
 
 Session policy has a particularly strict boundary.
 
-Python detects facts and dispatches them as events. Examples of facts include application booted, authentication completed, request started, request completed, and request failed.
+The host detects facts and dispatches them as events. Examples of facts include application booted, authentication completed, request started, request completed, and request failed.
 
 Policy modules decide what those facts mean.
 
@@ -412,10 +410,12 @@ A view is an effect. It is not the application state machine. A transition might
 # Repository Map
 
 ```text
-skills/
-  <provider>/
-    <name>.json          capability identity and wiring
-    <name>.md            prompt-engineering content
+installer/
+  install.sh             device installer
+  setup/
+    bootstrap/           shipped defaults for application home
+    installs/            shipped skill content
+    providers/           shipped provider implementations
 
 apps/cli/
   client/                terminal UI and effect execution
@@ -427,18 +427,14 @@ packages/
   policy-runtime/        shared policy loading, delegation, stdio host
 
 core/
-  inpainter/             operations, auth, persistence, policy spawn
+  src/                   operations, auth, persistence, command entry, home init
   policy/                policy loader and stdio host
   scripts/               core operational policy
+  schema/                core status payload defaults
 
 operations/
   api/                   generic remote invoke routing
   auth/                  authentication
-
-providers/
-  <name>/
-    provider.json        provider registry information
-    app/                 provider implementation
 
 apps/studio/
   authoring/             desktop authoring UI; scripts/shared is session policy; policy/ is the loader
@@ -489,6 +485,8 @@ These are not settled architecture. They are discussions that later work should 
 * Launcher, Studio shell, and how the agent workspace sits inside the desktop surface: `.project/audits/9-7-studio-and-launcher-design-flow.md`
 * Identity, auth, and the relationship between `inpainter.app` and the desktop client: `.project/audits/9-7-identity-and-auth.md`
 * Hosted data plane (Supabase, R2, what stays on Cloudflare): `.project/audits/9-5-platform-data-plane.md`
-* Capability assembly from skill, layout, schema, CLI, and Python: `.project/audits/9-5-capability-architecture.md`
+* Capability assembly from skill, layout, schema, CLI, and core: `.project/audits/9-5-capability-architecture.md`
+* Inpainter core TypeScript host (Python retired): `.project/audits/9-17-inpainter-core-typescript-reconciliation.md`
+* Installation and core-owned application home: `.project/audits/9-17-installation-and-core-owned-application-home.md`
 * Child-project hierarchy, which is a different hierarchy from entry nesting: `.project/audits/9-5-child-projects.md`
 * Third-party agent integration through a skill plus CLI or bridge: `mcp/bridge.md`

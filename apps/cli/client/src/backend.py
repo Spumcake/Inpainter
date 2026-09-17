@@ -1,12 +1,20 @@
 """Async adapter to the shared, structured core command interface."""
 import asyncio
 import json
-import sys
+import os
+
+from src.core import core_command, uses_checkout_core, core_project, inpainter_home
 
 async def command(*args, params=None):
+    cmd = core_command()
+    cwd = str(core_project()) if uses_checkout_core() else None
+    env = os.environ.copy()
+    env.setdefault("INPAINTER_HOME", str(inpainter_home()))
     process = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "inpainter", *args,
+        *cmd, *args,
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        cwd=cwd,
+        env=env,
     )
     try:
         stdout, stderr = await process.communicate(json.dumps(params).encode() if params is not None else None)

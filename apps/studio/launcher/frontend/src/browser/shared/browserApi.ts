@@ -5,6 +5,7 @@ import type {
   DestinationId,
   SettingsPayload,
   WorkspaceRecord,
+  WorkspaceAgent,
 } from "./types";
 
 const LOAD_DELAY_MS = 800;
@@ -54,6 +55,13 @@ export async function getUserHome(): Promise<string> {
   return "";
 }
 
+export async function getWorkspacesDir(): Promise<string> {
+  if (isTauri()) {
+    return invoke<string>("get_workspaces_dir");
+  }
+  return "/tmp/inpainter-workspaces";
+}
+
 export async function pickDirectory(): Promise<string | null> {
   if (!isTauri()) {
     throw new Error(launcherOnly);
@@ -66,7 +74,6 @@ export async function pickDirectory(): Promise<string | null> {
 export async function createWorkspace(input: {
   name: string;
   location: string;
-  folderName: string;
 }): Promise<WorkspaceRecord> {
   if (!isTauri()) {
     throw new Error(launcherOnly);
@@ -74,11 +81,11 @@ export async function createWorkspace(input: {
   return invoke<WorkspaceRecord>("create_workspace", input);
 }
 
-export async function importWorkspace(path: string): Promise<WorkspaceRecord> {
+export async function addWorkspace(path: string): Promise<WorkspaceRecord> {
   if (!isTauri()) {
     throw new Error(launcherOnly);
   }
-  return invoke<WorkspaceRecord>("import_workspace", { path });
+  return invoke<WorkspaceRecord>("add_workspace", { path });
 }
 
 export async function removeWorkspace(id: string): Promise<void> {
@@ -88,11 +95,52 @@ export async function removeWorkspace(id: string): Promise<void> {
   await invoke("remove_workspace", { id });
 }
 
-export async function launchStudio(): Promise<void> {
+export async function createAgent(input: {
+  workspaceId: string;
+  directory?: string;
+}): Promise<WorkspaceAgent> {
   if (!isTauri()) {
     throw new Error(launcherOnly);
   }
-  await invoke("launch_studio");
+  return invoke<WorkspaceAgent>("create_agent", input);
+}
+
+export async function revealFolder(path: string): Promise<void> {
+  if (!isTauri()) {
+    throw new Error(launcherOnly);
+  }
+  await invoke("reveal_folder", { path });
+}
+
+export async function readTextFile(path: string): Promise<string> {
+  if (!isTauri()) {
+    if (path.endsWith("workspace.json")) {
+          return JSON.stringify(
+        {
+          id: "preview-workspace",
+          name: "Example workspace",
+          slug: "example-workspace",
+          created: "2026-01-01T12:00:00.000Z",
+          modified: "2026-01-01T12:00:00.000Z",
+          inpainter: "pre-alpha",
+        },
+        null,
+        2,
+      );
+    }
+    throw new Error(launcherOnly);
+  }
+  return invoke<string>("read_text_file", { path });
+}
+
+export async function openWorkspace(project: { id: string; path: string }): Promise<void> {
+  if (!isTauri()) {
+    throw new Error(launcherOnly);
+  }
+  await invoke("open_workspace", {
+    workspaceId: project.id,
+    workspacePath: project.path,
+  });
 }
 
 function vitePreviewShell(): BrowserShellPayload {
@@ -104,10 +152,7 @@ function vitePreviewShell(): BrowserShellPayload {
         id: "projects",
         label: "Workspaces",
         icon: "folder",
-        sectionMenu: [
-          { id: "projects.new", label: "New workspace", icon: "plus" },
-          { id: "projects.import", label: "Import workspace", icon: "folder-plus" },
-        ],
+        sectionMenu: [{ id: "projects.new", label: "New Workspace", icon: "plus" }],
       },
       {
         id: "installs",
@@ -139,25 +184,52 @@ function vitePreviewDestination(destinationId: DestinationId): DestinationConten
     return {
       destinationId,
       content: {
-        kind: "placeholder",
-        title: "No Workspaces",
-        message: "Create a new workspace or import an existing one to get started.",
-        actions: [
+        kind: "workspaceBrowser",
+        tabs: [
           {
-            id: "projects.import",
-            label: "Import workspaces",
-            icon: "folder-plus",
-            tone: "neutral",
-            available: true,
-          },
-          {
-            id: "projects.new",
-            label: "New workspace",
-            icon: "plus",
-            tone: "accent",
-            available: true,
+            id: "local",
+            label: "Local",
+            builtin: true,
+            path: "/tmp/local",
+            agents: [
+              { id: "color-grade", name: "Color grade", directory: "/tmp/local", status: "Idle", modified: "2026-09-16T14:33:00.000Z" },
+              { id: "night-exterior", name: "Night exterior", directory: "/tmp/local", status: "Idle", modified: "2026-09-15T21:05:00.000Z" },
+              { id: "costume-reference", name: "Costume reference", directory: "/tmp/local", status: "Idle", modified: "2026-09-14T16:42:00.000Z" },
+              { id: "opening-sequence", name: "Opening sequence", directory: "/tmp/local", status: "Idle", modified: "2026-09-12T10:18:00.000Z" },
+            ],
+            tools: [
+              { id: "canvas.tool.json", label: "Canvas View", path: "/tmp/local/.inpainter/tools/canvas.tool.json" },
+              { id: "editor.tool.json", label: "Editor View", path: "/tmp/local/.inpainter/tools/editor.tool.json" },
+              { id: "session.tool.json", label: "Session View", path: "/tmp/local/.inpainter/tools/session.tool.json" },
+            ],
           },
         ],
+        selectedTab: "local",
+        canAddTab: true,
+        panes: {
+          local: {
+            tree: [
+              {
+                id: "local/.inpainter",
+                label: ".inpainter",
+                kind: "folder",
+                path: "/tmp/local/.inpainter",
+                agents: [],
+                children: [
+                  {
+                    id: "local/.inpainter/workspace.json",
+                    label: "workspace.json",
+                    kind: "file",
+                    path: "/tmp/local/.inpainter/workspace.json",
+                    agents: [],
+                  },
+                ],
+              },
+            ],
+            emptyMessage: "",
+            emptyDescription: "",
+          },
+        },
       },
     };
   }

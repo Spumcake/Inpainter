@@ -15,6 +15,7 @@ export type SessionState = {
   skill: string;
   directory: string;
   project_title: string;
+  last_error?: string;
   feed: FeedState;
   [key: string]: unknown;
 };

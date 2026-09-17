@@ -172,7 +172,9 @@ These responsibilities must remain distinct.
 
 Every decision has one owner.
 
-If TypeScript modules in a `scripts/` tree decide session behavior, Python and React must not contain a fallback copy of that behavior.
+If TypeScript modules in a `scripts/` tree decide session behavior, the host and React must not contain a fallback copy of that behavior.
+
+If core owns application-home initialization, the launcher must not keep a parallel copy of those filesystem rules.
 
 If a layout owns capability presentation, React must not independently encode the same capability-specific rules.
 
@@ -228,7 +230,7 @@ Ask:
 
 ### Session
 
-* Did Python gain a branch deciding session state or lifecycle behavior?
+* Did the core host gain a branch deciding session state or lifecycle behavior?
 * Did the host begin interpreting policy?
 * Could the requested session behavior still be changed by editing TypeScript modules in the `scripts/` tree without changing host or React code?
 * Did the working chrome appear after policy declared a fatal condition?
