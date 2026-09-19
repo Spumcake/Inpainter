@@ -4,9 +4,9 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::home::{self, SettingsFieldRecord, SettingsPanelRecord};
+use crate::cli;
 use crate::skill_browser;
 use crate::workspace;
 
@@ -217,6 +217,66 @@ pub async fn get_settings(category_id: Option<String>) -> Result<SettingsRespons
     with_simulated_load(move || settings_payload(category_id.as_deref())).await?
 }
 
+#[tauri::command]
+pub fn update_settings(patch: serde_json::Value) -> Result<serde_json::Value, String> {
+    if !patch.is_object() {
+        return Err("settings update patch must be an object".to_string());
+    }
+    cli::run_with_stdin(&["settings", "update"], Some(&patch.to_string()))
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MachineSettings {
+    title: String,
+    version_label: String,
+    selected_category: String,
+    categories: Vec<SettingsCategoryRecord>,
+    panels: Vec<SettingsPanelRecord>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct SettingsCategoryRecord {
+    id: String,
+    label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsPanelRecord {
+    category_id: String,
+    fields: Vec<SettingsFieldRecord>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum SettingsFieldRecord {
+    Path {
+        id: String,
+        title: String,
+        description: String,
+        value: String,
+    },
+    Number {
+        id: String,
+        title: String,
+        description: String,
+        value: i32,
+        min: i32,
+        max: i32,
+    },
+    Bool {
+        id: String,
+        title: String,
+        description: String,
+        value: bool,
+        label: String,
+    },
+    Placeholder {
+        message: String,
+    },
+}
+
 fn shell_payload() -> BrowserShellResponse {
     BrowserShellResponse {
         brand: BrandPayload {
@@ -395,7 +455,8 @@ fn placeholder_content(label: &str) -> DestinationContent {
 }
 
 fn settings_payload(category_id: Option<&str>) -> Result<SettingsResponse, String> {
-    let stored = home::load_machine_settings()?;
+    let stored: MachineSettings = serde_json::from_value(cli::run(&["settings", "get"])?)
+        .map_err(|err| format!("core settings get returned invalid settings: {err}"))?;
     let selected = category_id
         .filter(|id| stored.categories.iter().any(|category| category.id == *id))
         .unwrap_or(stored.selected_category.as_str())

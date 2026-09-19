@@ -1,12 +1,4 @@
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { CoreError } from "../errors.ts";
@@ -15,7 +7,6 @@ import {
   bootstrapDir,
   cacheDir,
   configDir,
-  defaultsDir,
   downloadsDir,
   inpainterHome,
   installsCustomDir,
@@ -29,9 +20,11 @@ import {
   settingsPath,
   workspacesDir,
 } from "../paths.ts";
+import { readJsonObject, validateLauncher, validateSettings } from "./validation.ts";
+import { ensureLocalWorkspace, type WorkspaceRecord } from "./workspaces.ts";
 
-const WORKSPACE_INPAINTER = "pre-alpha";
-const LOCAL_WORKSPACE_ID = "local";
+export type SeedResult = "created" | "existing" | "migrated";
+export type LocalWorkspaceRecord = WorkspaceRecord;
 
 export type HomeStatus = {
   home: string;
@@ -72,12 +65,23 @@ export function homeInit(): Record<string, unknown> {
     );
   }
 
-  const settings = seedJsonFile(join(bootstrap, "settings.json"), settingsPath(), rewriteSeededSettings);
-  const launcher = seedJsonFile(join(bootstrap, "launcher.json"), launcherRegistryPath());
+  const settings = seedConfigFile(
+    settingsPath(),
+    join(home, "settings.json"),
+    join(bootstrap, "settings.json"),
+    validateSettings,
+    rewriteSeededSettings,
+  );
+  const launcher = seedConfigFile(
+    launcherRegistryPath(),
+    join(home, "launcher.json"),
+    join(bootstrap, "launcher.json"),
+    validateLauncher,
+  );
   seedMissingTree(join(bootstrap, "installs"), installsDir());
   mkdirSync(installsIncludedDir(), { recursive: true });
   mkdirSync(installsCustomDir(), { recursive: true });
-  ensureLocalWorkspace();
+  const local = ensureLocalWorkspace();
 
   return {
     home,
@@ -86,7 +90,7 @@ export function homeInit(): Record<string, unknown> {
       settings,
       launcher,
     },
-    localWorkspace: localWorkspaceDir(),
+    localWorkspace: local,
     status: homeStatus(),
   };
 }
@@ -111,19 +115,31 @@ function ensureDirectories(): void {
   }
 }
 
-function seedJsonFile(
-  source: string,
+function seedConfigFile(
   destination: string,
+  legacy: string,
+  bootstrapSource: string,
+  validate: (value: Record<string, unknown>, path: string) => void,
   decorate?: (value: Record<string, unknown>) => Record<string, unknown>,
-): "created" | "existing" {
+): SeedResult {
   if (existsSync(destination)) {
-    readJsonObject(destination);
+    validate(readJsonObject(destination), destination);
     return "existing";
   }
-  if (!existsSync(source)) {
-    throw new CoreError(`bootstrap file is missing: ${source}`);
+  if (existsSync(legacy)) {
+    const migrated = readJsonObject(legacy);
+    validate(migrated, legacy);
+    mkdirSync(dirname(destination), { recursive: true });
+    writeFileSync(destination, `${JSON.stringify(migrated, null, 2)}\n`);
+    return "migrated";
   }
-  const seeded = decorate ? decorate(readJsonObject(source)) : readJsonObject(source);
+  if (!existsSync(bootstrapSource)) {
+    throw new CoreError(`bootstrap file is missing: ${bootstrapSource}`);
+  }
+  const seeded = decorate
+    ? decorate(readJsonObject(bootstrapSource))
+    : readJsonObject(bootstrapSource);
+  validate(seeded, bootstrapSource);
   mkdirSync(dirname(destination), { recursive: true });
   writeFileSync(destination, `${JSON.stringify(seeded, null, 2)}\n`);
   return "created";
@@ -161,19 +177,6 @@ function rewriteSeededSettings(settings: Record<string, unknown>): Record<string
   return settings;
 }
 
-function readJsonObject(path: string): Record<string, unknown> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-  } catch {
-    throw new CoreError(`${path} is not valid JSON`);
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new CoreError(`${path} is not a JSON object`);
-  }
-  return parsed as Record<string, unknown>;
-}
-
 function seedMissingTree(source: string, destination: string): void {
   if (!existsSync(source) || !statSync(source).isDirectory()) {
     return;
@@ -184,62 +187,6 @@ function seedMissingTree(source: string, destination: string): void {
     const to = join(destination, entry.name);
     if (entry.isDirectory()) {
       seedMissingTree(from, to);
-      continue;
-    }
-    if (entry.isFile() && !existsSync(to)) {
-      copyFileSync(from, to);
-    }
-  }
-}
-
-function ensureLocalWorkspace(): void {
-  const workspace = localWorkspaceDir();
-  mkdirSync(workspace, { recursive: true });
-  const metaDir = join(workspace, ".inpainter");
-  mkdirSync(metaDir, { recursive: true });
-  const manifestPath = join(metaDir, "workspace.json");
-  if (existsSync(manifestPath)) {
-    readJsonObject(manifestPath);
-  } else {
-    const now = new Date().toISOString();
-    writeFileSync(
-      manifestPath,
-      `${JSON.stringify(
-        {
-          id: LOCAL_WORKSPACE_ID,
-          name: "Local",
-          slug: "local",
-          created: now,
-          modified: now,
-          inpainter: WORKSPACE_INPAINTER,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-  }
-  seedWorkspaceDefaults(workspace);
-}
-
-function seedWorkspaceDefaults(workspace: string): void {
-  const defaults = defaultsDir();
-  if (!existsSync(defaults) || !statSync(defaults).isDirectory()) {
-    throw new CoreError(`Workspace defaults folder is missing: ${defaults}`);
-  }
-  copyDefaults(defaults, join(workspace, ".inpainter"));
-}
-
-function copyDefaults(source: string, destination: string): void {
-  mkdirSync(destination, { recursive: true });
-  for (const entry of readdirSync(source, { withFileTypes: true })) {
-    const name = entry.name;
-    if (name === "structure.json" || name === "workspace.json") {
-      continue;
-    }
-    const from = join(source, name);
-    const to = join(destination, name);
-    if (entry.isDirectory()) {
-      copyDefaults(from, to);
       continue;
     }
     if (entry.isFile() && !existsSync(to)) {

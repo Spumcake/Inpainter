@@ -17,7 +17,7 @@ use tauri::{
 };
 
 use auth::{get_auth_session, sign_in, AuthState};
-use browser::{get_browser_shell, get_destination_content, get_settings};
+use browser::{get_browser_shell, get_destination_content, get_settings, update_settings};
 use studio::{open_workspace, shutdown_host_for_app, StudioHost};
 use dev_auth::{shutdown_auth_for_app, DevAuth};
 use workspace::{
@@ -97,6 +97,7 @@ pub fn run() {
             get_browser_shell,
             get_destination_content,
             get_settings,
+            update_settings,
             create_workspace,
             add_workspace,
             remove_workspace,

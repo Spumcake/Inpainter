@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-18T19:45:02.758Z",
+  "quality": "preview",
+  "width": 1920,
+  "height": 1080,
+  "alpha": "unassociated-png",
+  "checkerboard": false,
+  "fixture": {
+    "project": {
+      "path": "project.oreel",
+      "sha256": "479965fcbb335ab55ff5bf5d7c7423558d3adb8a7d901d6603cf8bfcda8fb17d"
+    },
+    "assets": {
+      "path": "project.assets.json",
+      "sha256": "2804880243a6b4c081ba9cc2e383f3502948594094cc1b2d547e2c0eaccdfa98"
+    }
+  },
+  "fonts": {
+    "inter-latin-400-normal.woff2": "8909904ab6c872eb994093482a88a28eca2cd95912d7b6fecd72103b0dc07edc",
+    "inter-latin-500-normal.woff2": "f3779f1efccc4bdcdf9c0a02ab95bf6bd092ed09c48c08cedc725889edd1d19f",
+    "inter-latin-600-normal.woff2": "f9a06e79cd3a2a20951c0f0e28f66dd0e6d3fda73911d640a2125c8fcb78f21a",
+    "inter-latin-700-normal.woff2": "6f56409fd3d64bb85f7d070bce20749db2d66b6d63cec586cc22d1c761be2491",
+    "inter-latin-800-normal.woff2": "a7d0a50f15d389cad679238466bdb5fc9787aa0715719064ce25abaff042820d",
+    "OFL.txt": "3b0a5fca3d17942cde889069889dedbbbd075e9b599968c82a95f4d944e9b345"
+  },
+  "host": {
+    "os": "linux x64",
+    "node": "v22.9.0",
+    "electron": "v20.18.3",
+    "xvfb": true,
+    "renderer": "OffscreenCanvas 2D via Electron offscreen BrowserWindow",
+    "hardwareAcceleration": false
+  },
+  "tolerances": {
+    "sameEngine": {
+      "maxAbs": 1,
+      "note": "Decoded RGBA, not PNG bytes. Covers PNG filter rounding on recapture from the same host."
+    },
+    "port": {
+      "maxAbs": 2,
+      "opaqueAlphaFromZeroForbidden": true,
+      "justification": "Canvas AA and Inter rasterization across hosts. Alpha 0 must stay transparent. Not the demo export PSNR≥20 / ±40 RGB crop."
+    }
+  },
+  "samples": [
+    {
+      "time": 0,
+      "label": "t-0s",
+      "instance": {
+        "path": "instance/t-0s.png",
+        "sha256": "7feee618aabaf9733ca3c916327488208b1307c8c8b152199ed2f4df4f8282f3"
+      },
+      "composition": {
+        "path": "composition/t-0s.png",
+        "sha256": "60c397a5d112f57c73415085808c208826aa4bb42c7afdeecb3af0973003d555"
+      }
+    },
+    {
+      "time": 0.2,
+      "label": "t-0.2s",
+      "instance": {
+        "path": "instance/t-0.2s.png",
+        "sha256": "c4e8bef8a0cac95f59990ee84a148070b01eaa140f04b633cf3ccbc3c0325dd1"
+      },
+      "composition": {
+        "path": "composition/t-0.2s.png",
+        "sha256": "e254b1c31e064cf0d0011b3188cc0de3220dd3d24cb4e96d79773ac56d2bdc3a"
+      }
+    },
+    {
+      "time": 0.6,
+      "label": "t-0.6s",
+      "instance": {
+        "path": "instance/t-0.6s.png",
+        "sha256": "aa90dcd5ade4d81bda3e02b267c24f1352336ea24d7bce4d1e731457e2ac6647"
+      },
+      "composition": {
+        "path": "composition/t-0.6s.png",
+        "sha256": "61b076a3db94fd76e82f958111a74c9ff7ed771331f28b875c7ad005d4b015cd"
+      }
+    },
+    {
+      "time": 0.7,
+      "label": "t-0.7s",
+      "instance": {
+        "path": "instance/t-0.7s.png",
+        "sha256": "219c371e3897dc43c2a266ad3dae18239e5a9d23c635ef13aadfd7f5b426d5ef"
+      },
+      "composition": {
+        "path": "composition/t-0.7s.png",
+        "sha256": "dda1a69af12098996b6298e995ae32f9974c61655609be3da03277f40690e562"
+      }
+    },
+    {
+      "time": 2,
+      "label": "t-2s",
+      "instance": {
+        "path": "instance/t-2s.png",
+        "sha256": "3f0f8f5f02c896a212503dd5475b21ac2f5417a22df48d793dd3c895ec58db58"
+      },
+      "composition": {
+        "path": "composition/t-2s.png",
+        "sha256": "7206fa562486cd812c03509260562e0cee996467af5b0d7c589abc316d96b2dd"
+      }
+    },
+    {
+      "time": 4.75,
+      "label": "t-4.75s",
+      "instance": {
+        "path": "instance/t-4.75s.png",
+        "sha256": "2d812fc03bff54557adc33f58b2c4bdbac80dc14c4eddfde46680629fb8a7d0a"
+      },
+      "composition": {
+        "path": "composition/t-4.75s.png",
+        "sha256": "6515699ad3d79e25db1ccbbc69c3ba70d1ba50238689206b5dd188f1cf24201d"
+      }
+    },
+    {
+      "time": 4.966666666666667,
+      "label": "t-149-30s",
+      "instance": {
+        "path": "instance/t-149-30s.png",
+        "sha256": "d24c0e2b00d2f88eca0de48086e51c5ed6be347cb1dab6ec77e7572a4d17056d"
+      },
+      "composition": {
+        "path": "composition/t-149-30s.png",
+        "sha256": "4cbfcb5aa4a123632e4884f443f3997fd99ecd91a9ef89e49a4208ac829bc760"
+      }
+    },
+    {
+      "time": 5,
+      "label": "t-5s",
+      "instance": {
+        "path": "instance/t-5s.png",
+        "sha256": "7feee618aabaf9733ca3c916327488208b1307c8c8b152199ed2f4df4f8282f3"
+      },
+      "composition": {
+        "path": "composition/t-5s.png",
+        "sha256": "60c397a5d112f57c73415085808c208826aa4bb42c7afdeecb3af0973003d555"
+      }
+    }
+  ]
+}

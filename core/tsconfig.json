@@ -15,5 +15,9 @@
       "@inpainter/policy-runtime": ["../packages/policy-runtime/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "policy/src/**/*.ts", "scripts/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "policy/src/**/*.ts", "scripts/**/*.ts"],
+  "exclude": [
+    "tests/helpers/motion-scene-composition-entry.ts",
+    "src/render/host/composition-entry.ts"
+  ]
 }

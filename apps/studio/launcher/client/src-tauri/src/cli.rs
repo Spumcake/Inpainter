@@ -1,11 +1,16 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::home::AppHome;
 use crate::paths;
 
 pub fn run(args: &[&str]) -> Result<serde_json::Value, String> {
-    let output = spawn(args)?;
+    run_with_stdin(args, None)
+}
+
+pub fn run_with_stdin(args: &[&str], stdin: Option<&str>) -> Result<serde_json::Value, String> {
+    let output = spawn(args, stdin)?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let parsed = if stdout.is_empty() {
         serde_json::Value::Null
@@ -39,7 +44,7 @@ pub fn apply_client_env(command: &mut Command) -> Result<(), String> {
     Ok(())
 }
 
-fn spawn(args: &[&str]) -> Result<std::process::Output, String> {
+fn spawn(args: &[&str], stdin: Option<&str>) -> Result<std::process::Output, String> {
     let home = AppHome::resolve()?;
     if let Ok(bin) = std::env::var("INPAINTER_CORE_BIN") {
         let path = PathBuf::from(bin);
@@ -49,28 +54,30 @@ fn spawn(args: &[&str]) -> Result<std::process::Output, String> {
                 path.display()
             ));
         }
-        return command_with_home(Command::new(path), &home)
-            .args(args)
-            .output()
-            .map_err(|err| format!("failed to run Inpainter core: {err}"));
+        let mut command = command_with_home(Command::new(path), &home);
+        command.args(args);
+        return output_with_stdin(command, stdin);
     }
 
     if use_source_core() {
-        return spawn_source_core(&home, args);
+        return spawn_source_core(&home, args, stdin);
     }
 
     let installed = home.core_bin();
     if installed.exists() {
-        return command_with_home(Command::new(&installed), &home)
-            .args(args)
-            .output()
-            .map_err(|err| format!("failed to run Inpainter core: {err}"));
+        let mut command = command_with_home(Command::new(&installed), &home);
+        command.args(args);
+        return output_with_stdin(command, stdin);
     }
 
-    spawn_source_core(&home, args)
+    spawn_source_core(&home, args, stdin)
 }
 
-fn spawn_source_core(home: &AppHome, args: &[&str]) -> Result<std::process::Output, String> {
+fn spawn_source_core(
+    home: &AppHome,
+    args: &[&str],
+    stdin: Option<&str>,
+) -> Result<std::process::Output, String> {
     let project = resolve_core_project()?;
     let tsx = tsx_bin(&project);
     let entry = project.join("src").join("cli.ts");
@@ -80,10 +87,30 @@ fn spawn_source_core(home: &AppHome, args: &[&str]) -> Result<std::process::Outp
             project.display()
         ));
     }
-    command_with_home(Command::new(tsx), home)
-        .arg(entry)
-        .args(args)
-        .current_dir(&project)
+    let mut command = command_with_home(Command::new(tsx), home);
+    command.arg(entry).args(args).current_dir(&project);
+    output_with_stdin(command, stdin)
+}
+
+fn output_with_stdin(
+    mut command: Command,
+    stdin: Option<&str>,
+) -> Result<std::process::Output, String> {
+    if let Some(input) = stdin {
+        command.stdin(Stdio::piped());
+        let mut child = command
+            .spawn()
+            .map_err(|err| format!("failed to run Inpainter core: {err}"))?;
+        if let Some(mut handle) = child.stdin.take() {
+            handle
+                .write_all(input.as_bytes())
+                .map_err(|err| format!("failed to write Inpainter core input: {err}"))?;
+        }
+        return child
+            .wait_with_output()
+            .map_err(|err| format!("failed to run Inpainter core: {err}"));
+    }
+    command
         .output()
         .map_err(|err| format!("failed to run Inpainter core: {err}"))
 }

@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>inpainter-core settled renderer</title>
+<script>
+  function loadCore(job) {
+    const href = job.engineHref;
+    const entry = require("node:url").fileURLToPath(href);
+    return require(entry);
+  }
+
+  async function run(job) {
+    if (!job || typeof job !== "object") {
+      return {
+        success: false,
+        error: { code: "RENDER_UNAVAILABLE", message: "render job is required" },
+      };
+    }
+    try {
+      const core = loadCore(job);
+      const host = new core.InProcessRenderHost();
+      const times = Array.isArray(job.times) ? job.times : [job.time];
+      const rendered = await host.renderSettledFrames(job.composition, times, job.fontRoot, {
+        source: job.source,
+        instance: job.instance,
+        projectWidth: job.projectWidth,
+        projectHeight: job.projectHeight,
+        trackHidden: job.trackHidden,
+      });
+      return {
+        success: true,
+        frames: rendered.map((frame) => ({
+          time: frame.time,
+          width: frame.width,
+          height: frame.height,
+          pngBase64: frame.bytes ? Buffer.from(frame.bytes).toString("base64") : undefined,
+        })),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: "RENDER_UNAVAILABLE",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  window.__runRenderJob = run;
+</script>

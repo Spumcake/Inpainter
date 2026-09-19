@@ -1,0 +1,290 @@
+{
+  "version": "1.2.0",
+  "project": {
+    "id": "291b8b18-6ffe-4e3a-93e1-0ca2c34f51d4",
+    "name": "OpenReel Motion Scene",
+    "createdAt": 1789687867150,
+    "modifiedAt": 1789687867152,
+    "settings": {
+      "width": 1920,
+      "height": 1080,
+      "frameRate": 30,
+      "sampleRate": 48000,
+      "channels": 2
+    },
+    "mediaLibrary": {
+      "items": []
+    },
+    "timeline": {
+      "tracks": [
+        {
+          "id": "track-motion-1789687867152-laixsp8",
+          "type": "graphics",
+          "name": "Motion",
+          "clips": [
+            {
+              "id": "motion-clip-motion-instance-1789687867152-u5ib3ac",
+              "mediaId": "motion-motion-instance-1789687867152-u5ib3ac",
+              "trackId": "track-motion-1789687867152-laixsp8",
+              "startTime": 0,
+              "duration": 5,
+              "inPoint": 0,
+              "outPoint": 5,
+              "effects": [],
+              "audioEffects": [],
+              "transform": {
+                "position": {
+                  "x": 0,
+                  "y": 0
+                },
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "rotation": 0,
+                "anchor": {
+                  "x": 0.5,
+                  "y": 0.5
+                },
+                "opacity": 1,
+                "fitMode": "contain"
+              },
+              "blendOpacity": 1,
+              "volume": 1,
+              "keyframes": [],
+              "metadata": {
+                "motionInstanceId": "motion-instance-1789687867152-u5ib3ac",
+                "motionCompositionId": "motion-1789687867150-iw8bdzf",
+                "motionClip": true
+              }
+            }
+          ],
+          "transitions": [],
+          "locked": false,
+          "hidden": false,
+          "muted": false,
+          "solo": false
+        }
+      ],
+      "subtitles": [],
+      "duration": 5,
+      "markers": []
+    },
+    "motionCompositions": [
+      {
+        "id": "motion-1789687867150-iw8bdzf",
+        "name": "Motion Scene",
+        "width": 1920,
+        "height": 1080,
+        "frameRate": 30,
+        "duration": 5,
+        "backgroundColor": "transparent",
+        "layers": [
+          {
+            "id": "motion-layer-1789687867150-2entwjc",
+            "type": "shape",
+            "name": "Accent Bar",
+            "startTime": 0,
+            "duration": 5,
+            "visible": true,
+            "locked": false,
+            "transform": {
+              "position": {
+                "x": 960,
+                "y": 702
+              },
+              "scale": {
+                "x": 1,
+                "y": 1
+              },
+              "rotation": 0,
+              "rotation3d": {
+                "x": 0,
+                "y": 0
+              },
+              "anchor": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "opacity": 1,
+              "perspective": 1000,
+              "transformStyle": "flat"
+            },
+            "keyframes": [
+              {
+                "id": "motion-kf-1789687867150-y6zsu7l",
+                "time": 0,
+                "property": "transform.scale.x",
+                "value": 0,
+                "easing": "ease-out"
+              },
+              {
+                "id": "motion-kf-1789687867150-z497tjb",
+                "time": 0.7,
+                "property": "transform.scale.x",
+                "value": 1,
+                "easing": "ease-out"
+              }
+            ],
+            "shapeType": "rectangle",
+            "width": 560,
+            "height": 18,
+            "style": {
+              "fill": {
+                "type": "solid",
+                "color": "#14b8a6",
+                "opacity": 1
+              },
+              "stroke": {
+                "color": "#14b8a6",
+                "width": 0,
+                "opacity": 0
+              },
+              "cornerRadius": 9
+            }
+          },
+          {
+            "id": "motion-layer-1789687867150-yfoya39",
+            "type": "text",
+            "name": "Headline",
+            "startTime": 0,
+            "duration": 5,
+            "visible": true,
+            "locked": false,
+            "transform": {
+              "position": {
+                "x": 960,
+                "y": 540
+              },
+              "scale": {
+                "x": 1,
+                "y": 1
+              },
+              "rotation": 0,
+              "rotation3d": {
+                "x": 0,
+                "y": 0
+              },
+              "anchor": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "opacity": 1,
+              "perspective": 1000,
+              "transformStyle": "flat"
+            },
+            "keyframes": [
+              {
+                "id": "motion-kf-1789687867150-rldusup",
+                "time": 0,
+                "property": "transform.opacity",
+                "value": 0,
+                "easing": "ease-out"
+              },
+              {
+                "id": "motion-kf-1789687867150-m11x5vq",
+                "time": 0.6,
+                "property": "transform.opacity",
+                "value": 1,
+                "easing": "ease-out"
+              },
+              {
+                "id": "motion-kf-1789687867150-6qrn5jj",
+                "time": 4.5,
+                "property": "transform.opacity",
+                "value": 1,
+                "easing": "ease-in"
+              },
+              {
+                "id": "motion-kf-1789687867150-lyqfobv",
+                "time": 5,
+                "property": "transform.opacity",
+                "value": 0,
+                "easing": "ease-in"
+              }
+            ],
+            "text": "Motion Scene",
+            "textAnimators": [
+              {
+                "id": "motion-text-anim-1789687867150-oivc51f",
+                "name": "Reveal Up",
+                "enabled": true,
+                "selector": {
+                  "basedOn": "characters",
+                  "start": 0,
+                  "end": 100,
+                  "offset": 0
+                },
+                "timing": {
+                  "startTime": 0,
+                  "duration": 0.45,
+                  "stagger": 0.035,
+                  "direction": "forward",
+                  "easing": "ease-out"
+                },
+                "properties": {
+                  "position": {
+                    "x": 0,
+                    "y": 36
+                  },
+                  "scale": {
+                    "x": 0.96,
+                    "y": 0.96
+                  },
+                  "rotation": 0,
+                  "opacity": 0
+                }
+              }
+            ],
+            "style": {
+              "fontFamily": "Inter",
+              "fontSize": 112,
+              "fontWeight": 800,
+              "color": "#ffffff",
+              "align": "center",
+              "lineHeight": 1.05
+            }
+          }
+        ],
+        "assets": [],
+        "variables": [],
+        "markers": [],
+        "guides": [],
+        "createdAt": 1789687867150,
+        "modifiedAt": 1789687867150
+      }
+    ],
+    "motionInstances": [
+      {
+        "id": "motion-instance-1789687867152-u5ib3ac",
+        "compositionId": "motion-1789687867150-iw8bdzf",
+        "name": "Motion Scene",
+        "trackId": "track-motion-1789687867152-laixsp8",
+        "startTime": 0,
+        "duration": 5,
+        "transform": {
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1
+          },
+          "rotation": 0,
+          "anchor": {
+            "x": 0.5,
+            "y": 0.5
+          },
+          "opacity": 1,
+          "fitMode": "contain"
+        },
+        "opacity": 1
+      }
+    ],
+    "textClips": [],
+    "shapeClips": [],
+    "svgClips": [],
+    "stickerClips": []
+  }
+}

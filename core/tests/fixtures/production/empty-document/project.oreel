@@ -1,0 +1,31 @@
+{
+  "version": "1.2.0",
+  "project": {
+    "id": "642e5de6-88fd-4ff2-97b1-fa43c191bad1",
+    "name": "Empty Document",
+    "createdAt": 1789750603001,
+    "modifiedAt": 1789750603001,
+    "settings": {
+      "width": 1920,
+      "height": 1080,
+      "frameRate": 30,
+      "sampleRate": 48000,
+      "channels": 2
+    },
+    "mediaLibrary": {
+      "items": []
+    },
+    "timeline": {
+      "tracks": [],
+      "subtitles": [],
+      "duration": 0,
+      "markers": []
+    },
+    "motionCompositions": [],
+    "motionInstances": [],
+    "textClips": [],
+    "shapeClips": [],
+    "svgClips": [],
+    "stickerClips": []
+  }
+}
