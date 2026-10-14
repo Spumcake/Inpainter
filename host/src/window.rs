@@ -199,7 +199,7 @@ mod tests {
     impl Harness {
         fn new() -> Self {
             let ctx = egui::Context::default();
-            let app = HostWindow::with_child(&ctx, crate::process::Running::declared(demo()));
+            let app = HostWindow::with_child(&ctx, crate::process::Running::declared(template()));
             let mut harness = Self {
                 ctx,
                 app,
@@ -241,23 +241,23 @@ mod tests {
         }
     }
 
-    /// What the demo declares: one tab, the grid, and the panel on the right.
-    fn demo() -> Vec<protocol::AppMessage> {
+    /// What the template declares: one tab, the grid, and the panel on the right.
+    fn template() -> Vec<protocol::AppMessage> {
         use protocol::{AppMessage, ContentsKind, PanelSide};
         vec![
             AppMessage::Hello {
                 protocol: protocol::PROTOCOL_VERSION,
             },
             AppMessage::Tab {
-                id: "demo".into(),
-                label: "Demo".into(),
+                id: "template".into(),
+                label: "Template".into(),
             },
             AppMessage::Contents {
-                tab: "demo".into(),
+                tab: "template".into(),
                 kind: ContentsKind::Grid,
             },
             AppMessage::Panel {
-                tab: "demo".into(),
+                tab: "template".into(),
                 side: PanelSide::Right,
             },
             AppMessage::End,

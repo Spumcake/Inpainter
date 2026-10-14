@@ -9,15 +9,15 @@ fn main() {
                 protocol: protocol::PROTOCOL_VERSION,
             },
             AppMessage::Tab {
-                id: String::from("demo"),
-                label: String::from("Demo"),
+                id: String::from("template"),
+                label: String::from("Template"),
             },
             AppMessage::Contents {
-                tab: String::from("demo"),
+                tab: String::from("template"),
                 kind: ContentsKind::Grid,
             },
             AppMessage::Panel {
-                tab: String::from("demo"),
+                tab: String::from("template"),
                 side: PanelSide::Right,
             },
             AppMessage::End,

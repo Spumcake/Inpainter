@@ -1,3 +1,4 @@
+mod apps;
 mod grid;
 mod icons;
 mod panel;
@@ -8,6 +9,10 @@ mod widgets;
 mod window;
 
 fn main() -> eframe::Result<()> {
-    let child = process::Running::start();
+    let requested = apps::requested();
+    let child = match apps::choose(apps::discover(), requested.as_deref()) {
+        Some(app) => process::Running::start(&app.executable),
+        None => process::Running::not_started(),
+    };
     window::run(child)
 }

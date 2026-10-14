@@ -1,4 +1,4 @@
-//! The demo child. The host draws a declaration only after `end`.
+//! The sub-application's process. The host draws a declaration only after `end`.
 
 use std::io::{BufRead, Write};
 use std::process::{Child, Command, Stdio};
@@ -20,7 +20,7 @@ enum PipeEvent {
     Closed,
 }
 
-/// The demo process, or the record that it never started.
+/// The sub-application's process, or the record that it never started.
 pub struct Running {
     child: Option<Child>,
     events: Option<Receiver<PipeEvent>>,
@@ -34,16 +34,11 @@ pub struct Running {
 }
 
 impl Running {
-    /// Spawns `demo` beside the host executable. A missing path or a failed
-    /// spawn is the same as [`Self::not_started`]: the window still opens.
-    pub fn start() -> Self {
-        let Ok(exe) = std::env::current_exe() else {
-            return Self::not_started();
-        };
-        let Some(dir) = exe.parent() else {
-            return Self::not_started();
-        };
-        let mut command = Command::new(dir.join("demo"));
+    /// Spawns the sub-application's program, which `apps::discover` found
+    /// from its manifest. A failed spawn is the same as
+    /// [`Self::not_started`]: the window still opens.
+    pub fn start(executable: &std::path::Path) -> Self {
+        let mut command = Command::new(executable);
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -88,7 +83,8 @@ impl Running {
         }
     }
 
-    /// No process. Frame tests use this so they do not spawn the demo.
+    /// No process: no sub-application was found, or frame tests that do not
+    /// spawn one.
     pub fn not_started() -> Self {
         Self {
             child: None,
@@ -150,8 +146,8 @@ impl Running {
         self.exited
     }
 
-    /// Tells a still-running demo to exit and waits up to `SHUTDOWN_GRACE`.
-    /// A demo that has not exited by then is stopped, so a stuck process
+    /// Tells a still-running sub-application to exit and waits up to
+    /// `SHUTDOWN_GRACE`. One that has not exited by then is stopped, so a stuck process
     /// cannot keep the window from closing.
     pub fn shutdown(mut self) {
         if !self.exited {

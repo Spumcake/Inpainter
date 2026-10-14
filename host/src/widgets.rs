@@ -1,7 +1,7 @@
 //! Controls shared by the menu rows and the panel tab.
 //!
 //! Menu rows are drawn when a sub-application declares them. This slice's
-//! demo declares none, so the menu does not open and those rows are unused.
+//! template declares none, so the menu does not open and those rows are unused.
 #![allow(dead_code)]
 
 use crate::toolbar;
