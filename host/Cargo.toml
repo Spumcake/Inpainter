@@ -1,0 +1,11 @@
+[package]
+name = "inpainter"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[dependencies]
+eframe = "=0.36.2"
+iconflow = { version = "=2.1.0", default-features = false, features = ["pack-iconoir"] }
+protocol = { path = "../protocol" }
