@@ -6,10 +6,12 @@ The stack is Rust, egui through eframe, and Iconoir icons.
 
 ## Layout
 
-- `host/` — the `inpainter` program: the window, the shell's common UI (tab strip, menu button, toolbar), the shared components a sub-application can declare (the properties panel and the grid), and finding and running sub-applications. It never depends on a sub-application.
-- `protocol/` — the contract between the host and sub-applications: the messages, one JSON object per line, and the manifest. It is the only crate both sides share.
-- `apps/<id>/` — one sub-application per folder: its crate, its `manifest.json`, and its own `AGENTS.md`. It depends on `protocol` only, never on the host or another sub-application.
+- `host/` — the `inpainter` program: the window, the shell's common UI (tab strip, menu button, toolbar), the shared components a sub-application can declare (the properties panel with its outliner, the grid, and the drawing surface), the questions and file dialogs a sub-application asks for, and finding and running sub-applications. It draws every toolbar item, menu row, panel row, and tab from what the selected tab's sub-application declared, and sends back the action each one carries. It never depends on a sub-application.
+- `protocol/` — the contract between the host and sub-applications: the messages, one JSON object per line, the declarations, and the manifest.
+- `draw/` — the shared document model of the drawing surface: documents, steps, ink, text, the camera, and gestures. The host draws and previews with it; a sub-application that owns such documents commits and records with it. It has no session, history, registry, store, or preferences.
+- `apps/<id>/` — one sub-application per folder: its crate, its `manifest.json`, and its own `AGENTS.md`. It depends on `protocol`, and on `draw` when it uses the drawing surface, never on the host or another sub-application.
 - `apps/template/` — the smallest correct sub-application. New ones are copied from it.
+- `client/` — `sketch-client`, the no-host check: it drives `simple-sketch` through the protocol alone and compares every reply with an in-process session.
 
 ## Rules
 
@@ -27,4 +29,4 @@ These are for agents developing Inpainter. They are not the assistant skills a s
 
 ## Commands
 
-From the repository root: `cargo build`, `cargo test`, and `cargo run -p inpainter`. With more than one sub-application, `cargo run -p inpainter -- --app <id>` chooses which one the host starts. Without `--app`, it starts the first by id.
+From the repository root: `cargo build`, `cargo test`, and `cargo run -p inpainter`. `cargo run -p inpainter -- --app <id>` chooses which sub-application the host starts; `--app` may be given more than once, and every one named runs in the same window. Without `--app`, it starts the first by id. `target/debug/sketch-client` runs the no-host check after a build. With `INPAINTER_TRACE=1`, the host writes every message to and from sub-applications to standard error.

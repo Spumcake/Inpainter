@@ -6,4 +6,12 @@ rust-version = "1.95"
 publish = false
 
 [dependencies]
+directories = "=6.0.0"
+draw = { path = "../../draw" }
+kurbo = "=0.13.1"
 protocol = { path = "../../protocol" }
+serde_json = "=1.0.152"
+
+[dev-dependencies]
+draw = { path = "../../draw", features = ["test-support"] }
+iconflow = { version = "=2.1.0", default-features = false, features = ["pack-iconoir"] }

@@ -1,15 +1,51 @@
-//! Tab bar: the menu button, the tabs a sub-application reports, and the plus.
+//! Tab bar: the menu button, the tabs every running sub-application reports,
+//! and the plus, from Simple Sketch 1.0.1's `tabs.rs`. A click sends the
+//! command its sub-application declared for it.
 
 use crate::toolbar::{self, BAR, ICON, icon_text};
+use crate::widgets;
 use eframe::egui::{self, Color32, RichText};
 
 const INACTIVE: Color32 = Color32::from_rgb(243, 244, 247);
 const TAB_EDGE: Color32 = Color32::from_rgb(229, 231, 235);
 const TAB_HEIGHT: f32 = 34.0;
 
-/// Draws the tab bar. The menu button, the plus, and each tab's close mark
-/// are drawn, and a click on any of them does nothing.
-pub(crate) fn show(ui: &mut egui::Ui, declaration: &protocol::Declaration) {
+/// One tab in the strip: which running sub-application reported it, and how
+/// it reported it.
+pub(crate) struct StripTab {
+    pub app: usize,
+    pub id: String,
+    pub label: String,
+    /// The tab the window shows.
+    pub active: bool,
+    pub close_waits: bool,
+    pub unsaved: bool,
+}
+
+/// What the person did on the tab bar.
+pub(crate) enum TabEvent {
+    /// A row of the selected tab's menu.
+    Menu(protocol::Action),
+    Select {
+        app: usize,
+        tab: String,
+    },
+    Close {
+        app: usize,
+        tab: String,
+    },
+    Plus,
+}
+
+/// Draws the tab bar: the menu button with the selected tab's declared menu,
+/// every running sub-application's tabs, and the plus.
+pub(crate) fn show(
+    ui: &mut egui::Ui,
+    tabs: &[StripTab],
+    menu_rows: &[protocol::MenuEntry],
+    plus_tip: Option<&str>,
+) -> Vec<TabEvent> {
+    let mut events = Vec::new();
     let mut active_tab = None;
     let bar = egui::Frame::new()
         .fill(BAR)
@@ -24,17 +60,20 @@ pub(crate) fn show(ui: &mut egui::Ui, declaration: &protocol::Declaration) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.set_height(TAB_HEIGHT);
-                menu(ui);
-                active_tab = tab_row(ui, declaration);
-                let _plus = toolbar::glyph_button(
+                menu(ui, menu_rows, &mut events);
+                active_tab = tab_row(ui, tabs, &mut events);
+                let plus = toolbar::glyph_button(
                     ui,
                     "plus",
                     16.0,
                     egui::vec2(32.0, TAB_HEIGHT),
-                    None,
+                    plus_tip,
                     true,
                     false,
                 );
+                if plus.clicked() {
+                    events.push(TabEvent::Plus);
+                }
             });
         });
     // The hairline stops under the active tab, which joins the white toolbar.
@@ -46,10 +85,13 @@ pub(crate) fn show(ui: &mut egui::Ui, declaration: &protocol::Declaration) {
         }
         None => toolbar::hairline(ui, rect.left(), rect.right(), rect.bottom()),
     }
+    events
 }
 
-fn menu(ui: &mut egui::Ui) {
-    let _response = toolbar::glyph_button(
+/// The menu button. Its rows are the selected tab's declared menu; with none
+/// declared, it opens nothing.
+fn menu(ui: &mut egui::Ui, rows: &[protocol::MenuEntry], events: &mut Vec<TabEvent>) {
+    let response = toolbar::glyph_button(
         ui,
         "menu",
         18.0,
@@ -58,16 +100,18 @@ fn menu(ui: &mut egui::Ui) {
         true,
         false,
     );
+    if rows.is_empty() {
+        return;
+    }
+    egui::Popup::menu(&response).show(|ui| {
+        if let Some(action) = widgets::entry_rows(ui, rows).and_then(|row| row.action.clone()) {
+            events.push(TabEvent::Menu(action));
+        }
+    });
 }
 
 /// Returns the visible part of the active tab.
-fn tab_row(ui: &mut egui::Ui, declaration: &protocol::Declaration) -> Option<egui::Rect> {
-    let tabs: Vec<_> = declaration
-        .tabs
-        .iter()
-        .enumerate()
-        .map(|(index, tab)| (tab.id.as_str(), tab.label.as_str(), index == 0))
-        .collect();
+fn tab_row(ui: &mut egui::Ui, tabs: &[StripTab], events: &mut Vec<TabEvent>) -> Option<egui::Rect> {
     let width = (ui.available_width() - 36.0).max(48.0);
     let mut active_rect = None;
     let row = egui::Layout::left_to_right(egui::Align::Center);
@@ -83,16 +127,17 @@ fn tab_row(ui: &mut egui::Ui, declaration: &protocol::Declaration) -> Option<egu
                     ui.set_height(TAB_HEIGHT);
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let visible = ui.clip_rect();
-                    for (id, name, active) in tabs {
+                    for strip in tabs {
                         let tab = Tab {
-                            id,
-                            name,
-                            active,
-                            close_waits: false,
-                            unsaved: false,
+                            app: strip.app,
+                            id: &strip.id,
+                            name: &strip.label,
+                            active: strip.active,
+                            close_waits: strip.close_waits,
+                            unsaved: strip.unsaved,
                         };
-                        let rect = tab_chip(ui, tab);
-                        if active {
+                        let rect = tab_chip(ui, tab, events);
+                        if strip.active {
                             active_rect = Some(rect.intersect(visible));
                         }
                     }
@@ -103,6 +148,7 @@ fn tab_row(ui: &mut egui::Ui, declaration: &protocol::Declaration) -> Option<egu
 }
 
 struct Tab<'a> {
+    app: usize,
     id: &'a str,
     name: &'a str,
     active: bool,
@@ -112,10 +158,9 @@ struct Tab<'a> {
     unsaved: bool,
 }
 
-/// One tab: its name, then its close control. Double-clicking does not edit
-/// the title. A click on the tab or its close mark, including a middle click,
-/// does nothing.
-fn tab_chip(ui: &mut egui::Ui, tab: Tab<'_>) -> egui::Rect {
+/// One tab: its name, then its close control. Clicking the tab shows it.
+/// Double-clicking does not edit the title. A middle click closes it.
+fn tab_chip(ui: &mut egui::Ui, tab: Tab<'_>, events: &mut Vec<TabEvent>) -> egui::Rect {
     const PAD_LEFT: f32 = 14.0;
     const PAD_RIGHT: f32 = 8.0;
     const CLOSE: f32 = 20.0;
@@ -147,9 +192,20 @@ fn tab_chip(ui: &mut egui::Ui, tab: Tab<'_>) -> egui::Rect {
         egui::pos2(rect.right() - PAD_RIGHT - CLOSE / 2.0, rect.center().y),
         egui::vec2(CLOSE, CLOSE),
     );
-    let close = close_control(ui, close_rect, tab.id, !tab.close_waits);
+    let close = close_control(ui, close_rect, tab.app, tab.id, !tab.close_waits);
     let dot = tab.unsaved && !response.hovered() && !close.hovered();
     paint_close_mark(ui, close_rect, !tab.close_waits, dot);
+    if close.clicked() || (response.middle_clicked() && !tab.close_waits) {
+        events.push(TabEvent::Close {
+            app: tab.app,
+            tab: tab.id.to_string(),
+        });
+    } else if response.clicked() {
+        events.push(TabEvent::Select {
+            app: tab.app,
+            tab: tab.id.to_string(),
+        });
+    }
     rect
 }
 
@@ -189,13 +245,19 @@ fn paint_tab(painter: &egui::Painter, rect: egui::Rect, active: bool) {
     painter.add(egui::Shape::line(outline, egui::Stroke::new(1.0, TAB_EDGE)));
 }
 
-fn close_control(ui: &mut egui::Ui, rect: egui::Rect, id: &str, enabled: bool) -> egui::Response {
+fn close_control(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    app: usize,
+    id: &str,
+    enabled: bool,
+) -> egui::Response {
     let sense = if enabled {
         egui::Sense::click()
     } else {
         egui::Sense::hover()
     };
-    ui.interact(rect, egui::Id::new(("tab-close", id)), sense)
+    ui.interact(rect, egui::Id::new(("tab-close", app, id)), sense)
 }
 
 /// The close mark, or a dot while the sketch has unsaved changes and the

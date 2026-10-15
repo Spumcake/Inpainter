@@ -76,28 +76,40 @@ pub fn discover() -> Vec<App> {
     apps
 }
 
-/// The sub-application to start: the one `--app <id>` names, or, with no
-/// `--app`, the first by id. An unknown id starts nothing.
-pub fn choose(apps: Vec<App>, requested: Option<&str>) -> Option<App> {
-    match requested {
-        Some(id) => {
-            let found = apps.into_iter().find(|app| app.manifest.id == id);
-            if found.is_none() {
-                eprintln!("inpainter: no sub-application with id {id:?}");
-            }
-            found
-        }
-        None => apps.into_iter().next(),
+/// The sub-applications to start: each one `--app <id>` names, in the order
+/// named, or, with no `--app`, the first by id. An unknown id starts nothing.
+pub fn choose(apps: Vec<App>, requested: &[String]) -> Vec<App> {
+    if requested.is_empty() {
+        return apps.into_iter().take(1).collect();
     }
+    let mut apps = apps;
+    let mut chosen = Vec::new();
+    for id in requested {
+        match apps.iter().position(|app| app.manifest.id == *id) {
+            Some(index) => chosen.push(apps.remove(index)),
+            None => eprintln!("inpainter: no sub-application with id {id:?}"),
+        }
+    }
+    chosen
 }
 
-/// The value of `--app <id>` on the host's command line, if any.
-pub fn requested() -> Option<String> {
+/// Every `--app <id>` on the host's command line, in order.
+pub fn requested() -> Vec<String> {
+    let mut ids = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
-        if arg == "--app" {
-            return args.next();
+        if arg == "--app"
+            && let Some(id) = args.next()
+        {
+            ids.push(id);
         }
     }
-    None
+    ids
+}
+
+/// A sub-application's own folder in Inpainter's data folder, where it
+/// keeps its preferences and recovery copies.
+pub fn data_dir(id: &str) -> Option<PathBuf> {
+    let dirs = directories::ProjectDirs::from("io.github", "spumcake", "Inpainter")?;
+    Some(dirs.data_dir().join("apps").join(id))
 }

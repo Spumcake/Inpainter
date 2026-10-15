@@ -1,23 +1,70 @@
-//! The sub-application's process. The host draws a declaration only after `end`.
+//! A sub-application's process. The host draws a declaration only after
+//! `end`. Later messages replace what the sub-application declared: its tabs,
+//! documents, keys, toolbar, menu, panel, drawing surface, and questions.
 
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use protocol::{Accept, AppMessage, Declaration, HostMessage, ParseError};
+use draw::document::{Camera, NodeId, Sketch};
+use protocol::{
+    Accept, AppMessage, Ask, Canvas, Declaration, FileFilter, FileKind, HostMessage, Keys,
+    MenuEntry, Properties, TabEntry, Tabs, Toolbar,
+};
 
 /// How long a closing window waits for the sub-application to exit after
 /// `shutdown` before it stops the process.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+/// A ping goes out this often.
+const PING_EVERY: Duration = Duration::from_secs(1);
+/// With no answer for this long, the sub-application is not responding.
+const NO_ANSWER: Duration = Duration::from_secs(3);
 
 /// What the reader thread sends. The frame thread is the only writer of the
 /// declaration that is drawn.
 enum PipeEvent {
     Line(AppMessage),
-    Invalid(ParseError),
+    Invalid,
     Closed,
+}
+
+/// A document as the host shows it: the copy it replaces whole on each
+/// `document`, and the camera the host keeps while the tab is shown.
+pub struct Display {
+    pub sketch: Sketch,
+    pub camera: Camera,
+    /// Counts the documents this tab has received, so a preview held for a
+    /// sent gesture ends when the answer arrives.
+    pub version: u64,
+}
+
+/// A file dialog a sub-application asked for.
+pub struct FileRequest {
+    pub id: String,
+    pub kind: FileKind,
+    pub name: Option<String>,
+    pub folder: Option<String>,
+    pub filter: Option<FileFilter>,
+}
+
+/// Everything declared after the greeting.
+#[derive(Default)]
+pub struct Declared {
+    pub tabs: Option<Tabs>,
+    pub documents: HashMap<String, Display>,
+    pub keys: Keys,
+    pub toolbar: Option<Toolbar>,
+    pub menu: Vec<MenuEntry>,
+    pub properties: Option<Properties>,
+    pub canvas: Option<Canvas>,
+    pub ask: Option<Ask>,
+    pub files: VecDeque<FileRequest>,
+    pub quit_ready: bool,
 }
 
 /// The sub-application's process, or the record that it never started.
@@ -25,20 +72,34 @@ pub struct Running {
     child: Option<Child>,
     events: Option<Receiver<PipeEvent>>,
     reader: Option<JoinHandle<()>>,
+    /// Lines for the sub-application's standard input. A writer thread sends
+    /// them, so a sub-application that stops reading never stops the frame.
+    writer: Option<Sender<String>>,
+    writer_thread: Option<JoinHandle<()>>,
+    /// The window, once it exists, which a line from the sub-application wakes.
+    wake: Arc<Mutex<Option<eframe::egui::Context>>>,
     /// Empty until `Accept::Ready`, then the accepted value.
     shown: Declaration,
     building: Declaration,
     /// True until Ready, Failed, a closed pipe before `end`, or an exit before `end`.
     pending: bool,
     exited: bool,
+    pub declared: Declared,
+    last_ping: Instant,
+    last_pong: Instant,
 }
 
 impl Running {
     /// Spawns the sub-application's program, which `apps::discover` found
-    /// from its manifest. A failed spawn is the same as
-    /// [`Self::not_started`]: the window still opens.
-    pub fn start(executable: &std::path::Path) -> Self {
+    /// from its manifest, with its own folder in Inpainter's data folder.
+    /// A failed spawn is the same as [`Self::not_started`]: the window still opens.
+    pub fn start(executable: &std::path::Path, data_dir: Option<PathBuf>) -> Self {
         let mut command = Command::new(executable);
+        if let Some(dir) = data_dir
+            && std::fs::create_dir_all(&dir).is_ok()
+        {
+            command.arg("--data-dir").arg(dir);
+        }
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -53,63 +114,103 @@ impl Running {
             return Self::not_started();
         };
         let (tx, rx) = mpsc::channel();
+        let wake: Arc<Mutex<Option<eframe::egui::Context>>> = Arc::new(Mutex::new(None));
+        let reader_wake = Arc::clone(&wake);
         let reader = thread::spawn(move || {
+            let notify = || {
+                if let Ok(ctx) = reader_wake.lock()
+                    && let Some(ctx) = ctx.as_ref()
+                {
+                    ctx.request_repaint();
+                }
+            };
             let lines = std::io::BufReader::new(stdout).lines();
             for line in lines {
                 let event = match line {
                     Ok(line) => match protocol::parse_app_message(&line) {
                         Ok(parsed) => PipeEvent::Line(parsed),
-                        Err(error) => PipeEvent::Invalid(error),
+                        Err(_) => PipeEvent::Invalid,
                     },
                     Err(_) => {
                         let _ = tx.send(PipeEvent::Closed);
+                        notify();
                         return;
                     }
                 };
                 if tx.send(event).is_err() {
                     return;
                 }
+                notify();
             }
             let _ = tx.send(PipeEvent::Closed);
+            notify();
         });
+        let (writer, lines) = mpsc::channel::<String>();
+        let writer_thread = child.stdin.take().map(|mut stdin| {
+            thread::spawn(move || {
+                for line in lines {
+                    if stdin.write_all(line.as_bytes()).is_err() || stdin.flush().is_err() {
+                        return;
+                    }
+                }
+            })
+        });
+        let now = Instant::now();
         Self {
             child: Some(child),
             events: Some(rx),
             reader: Some(reader),
+            writer: Some(writer),
+            writer_thread,
+            wake,
             shown: Declaration::empty(),
             building: Declaration::empty(),
             pending: true,
             exited: false,
+            declared: Declared::default(),
+            last_ping: now,
+            last_pong: now,
         }
     }
 
     /// No process: no sub-application was found, or frame tests that do not
     /// spawn one.
     pub fn not_started() -> Self {
+        let now = Instant::now();
         Self {
             child: None,
             events: None,
             reader: None,
+            writer: None,
+            writer_thread: None,
+            wake: Arc::new(Mutex::new(None)),
             shown: Declaration::empty(),
             building: Declaration::empty(),
             pending: false,
             exited: true,
+            declared: Declared::default(),
+            last_ping: now,
+            last_pong: now,
         }
     }
 
-    /// No process, showing the declaration these messages build. Frame tests
-    /// use this to draw what a sub-application declared without spawning one.
+    /// No process, showing what these messages declare. Frame tests use this
+    /// to draw a sub-application without spawning one.
     #[cfg(test)]
     pub fn declared(messages: Vec<AppMessage>) -> Self {
-        let mut declaration = Declaration::empty();
+        let mut running = Self::not_started();
+        running.pending = true;
+        running.exited = false;
         for message in messages {
-            if declaration.accept(message) != Accept::More {
-                break;
-            }
+            running.apply(PipeEvent::Line(message));
         }
-        Self {
-            shown: declaration,
-            ..Self::not_started()
+        running
+    }
+
+    /// A line from the sub-application now wakes this window.
+    pub fn attach(&self, ctx: &eframe::egui::Context) {
+        if let Ok(mut wake) = self.wake.lock() {
+            *wake = Some(ctx.clone());
         }
     }
 
@@ -127,6 +228,10 @@ impl Running {
         if self.exited {
             return;
         }
+        if self.last_ping.elapsed() >= PING_EVERY && !self.pending {
+            self.last_ping = Instant::now();
+            self.send(&HostMessage::Ping);
+        }
         let Some(child) = self.child.as_mut() else {
             return;
         };
@@ -136,14 +241,53 @@ impl Running {
         }
     }
 
+    /// Writes one message to the sub-application. A process that has
+    /// exited, or never started, receives nothing.
+    pub fn send(&mut self, message: &HostMessage) {
+        if self.exited {
+            return;
+        }
+        if let Some(writer) = &self.writer {
+            let line = protocol::encode_host_message(message);
+            if trace() {
+                eprint!("inpainter → {line}");
+            }
+            let _ = writer.send(line);
+        }
+    }
+
     pub fn pending(&self) -> bool {
         self.pending
     }
 
-    /// This slice keeps the window up and does not draw a status from this.
-    #[allow(dead_code)]
     pub fn exited(&self) -> bool {
         self.exited
+    }
+
+    /// No `pong` for three seconds.
+    pub fn not_responding(&self) -> bool {
+        !self.exited && self.child.is_some() && self.last_pong.elapsed() >= NO_ANSWER
+    }
+
+    /// The tabs to draw: the latest `tabs`, or the ones the greeting reported,
+    /// with the first one active.
+    pub fn tabs(&self) -> (Vec<TabEntry>, Option<String>) {
+        if let Some(tabs) = &self.declared.tabs {
+            return (tabs.tabs.clone(), Some(tabs.active.clone()));
+        }
+        let tabs: Vec<TabEntry> = self
+            .shown
+            .tabs
+            .iter()
+            .map(|tab| TabEntry {
+                id: tab.id.clone(),
+                label: tab.label.clone(),
+                dirty: false,
+                close_waits: false,
+            })
+            .collect();
+        let active = tabs.first().map(|tab| tab.id.clone());
+        (tabs, active)
     }
 
     /// Tells a still-running sub-application to exit and waits up to
@@ -152,10 +296,8 @@ impl Running {
     pub fn shutdown(mut self) {
         if !self.exited {
             if let Some(mut child) = self.child.take() {
-                if let Some(mut stdin) = child.stdin.take() {
-                    let message = protocol::encode_host_message(&HostMessage::Shutdown);
-                    let _ = stdin.write_all(message.as_bytes());
-                    let _ = stdin.flush();
+                if let Some(writer) = self.writer.take() {
+                    let _ = writer.send(protocol::encode_host_message(&HostMessage::Shutdown));
                 }
                 let deadline = Instant::now() + SHUTDOWN_GRACE;
                 loop {
@@ -174,6 +316,10 @@ impl Running {
             }
             self.exited = true;
         }
+        self.writer = None;
+        if let Some(writer) = self.writer_thread.take() {
+            let _ = writer.join();
+        }
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
@@ -191,24 +337,113 @@ impl Running {
     }
 
     fn apply(&mut self, event: PipeEvent) {
-        if !self.pending {
+        let PipeEvent::Line(line) = event else {
+            // A line that does not parse is not drawn. Before `end` it, or a
+            // closed pipe, abandons the declaration.
+            if self.pending {
+                self.abandon();
+            }
             return;
-        }
-        match event {
-            PipeEvent::Line(line) => match self.building.accept(line) {
+        };
+        if self.pending {
+            match self.building.accept(line.clone()) {
                 Accept::More => {}
                 Accept::Ready => {
                     self.shown = std::mem::replace(&mut self.building, Declaration::empty());
                     self.pending = false;
+                    self.last_pong = Instant::now();
+                    return;
                 }
-                Accept::Failed => self.abandon(),
-            },
-            PipeEvent::Invalid(error) => {
-                // The failed line is not drawn.
-                let _ = error;
-                self.abandon();
+                Accept::Failed => {
+                    self.abandon();
+                    return;
+                }
             }
-            PipeEvent::Closed => self.abandon(),
+        }
+        self.update(line);
+    }
+
+    /// A message after the greeting replaces what it declares.
+    fn update(&mut self, message: AppMessage) {
+        if trace() {
+            let line = protocol::encode_app_message(&message);
+            let shown: String = line.chars().take(160).collect();
+            eprintln!("inpainter ← {}", shown.trim_end());
+        }
+        let declared = &mut self.declared;
+        match message {
+            AppMessage::Document {
+                tab,
+                sketch,
+                selection,
+                active_canvas,
+                camera,
+            } => {
+                let Some(snapshot) = draw::document::snapshot::sketch_from_value(&sketch) else {
+                    return;
+                };
+                let mut shown = snapshot.sketch;
+                let ids = |ids: &[u64]| -> Vec<NodeId> {
+                    ids.iter()
+                        .filter(|id| **id != 0)
+                        .map(|id| NodeId::new(*id))
+                        .collect()
+                };
+                shown.show_state(
+                    &ids(&selection),
+                    active_canvas.filter(|id| *id != 0).map(NodeId::new),
+                );
+                let previous = declared.documents.remove(&tab);
+                let version = previous.as_ref().map_or(1, |previous| previous.version + 1);
+                let camera = match (camera, &previous) {
+                    (Some(camera), _) => Camera {
+                        origin: camera.origin,
+                        zoom: camera.zoom,
+                    },
+                    (None, Some(previous)) => previous.camera,
+                    (None, None) => shown.camera(),
+                };
+                declared.documents.insert(
+                    tab,
+                    Display {
+                        sketch: shown,
+                        camera,
+                        version,
+                    },
+                );
+            }
+            AppMessage::File {
+                id,
+                kind,
+                name,
+                folder,
+                filter,
+            } => declared.files.push_back(FileRequest {
+                id,
+                kind,
+                name,
+                folder,
+                filter,
+            }),
+            AppMessage::Keys(keys) => declared.keys = keys,
+            AppMessage::Toolbar(toolbar) => declared.toolbar = Some(toolbar),
+            AppMessage::Menu { rows } => declared.menu = rows,
+            AppMessage::Properties(properties) => declared.properties = Some(properties),
+            AppMessage::Tabs(tabs) => {
+                declared
+                    .documents
+                    .retain(|id, _| tabs.tabs.iter().any(|tab| tab.id == *id));
+                declared.tabs = Some(tabs);
+            }
+            AppMessage::Canvas(canvas) => declared.canvas = Some(canvas),
+            AppMessage::Ask(ask) => declared.ask = Some(ask),
+            AppMessage::QuitReady => declared.quit_ready = true,
+            AppMessage::Pong => self.last_pong = Instant::now(),
+            AppMessage::Hello { .. }
+            | AppMessage::Tab { .. }
+            | AppMessage::Contents { .. }
+            | AppMessage::Panel { .. }
+            | AppMessage::End => {}
         }
     }
 
@@ -224,4 +459,10 @@ impl Running {
         self.shown = Declaration::empty();
         self.pending = false;
     }
+}
+
+/// `INPAINTER_TRACE` set: every message to and from sub-applications is
+/// written to standard error, so the two processes' parts can be read apart.
+fn trace() -> bool {
+    std::env::var_os("INPAINTER_TRACE").is_some()
 }

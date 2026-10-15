@@ -34,8 +34,16 @@ fn main() {
         let Ok(line) = line else {
             break;
         };
-        if let Ok(HostMessage::Shutdown) = protocol::parse_host_message(&line) {
-            break;
-        }
+        // A ping is answered so the host knows this program is responding,
+        // and with nothing unsaved, a quit is ready at once.
+        let reply = match protocol::parse_host_message(&line) {
+            Ok(HostMessage::Shutdown) => break,
+            Ok(HostMessage::Ping) => AppMessage::Pong,
+            Ok(HostMessage::Quit) => AppMessage::QuitReady,
+            _ => continue,
+        };
+        let mut stdout = std::io::stdout().lock();
+        let _ = stdout.write_all(protocol::encode_app_message(&reply).as_bytes());
+        let _ = stdout.flush();
     }
 }

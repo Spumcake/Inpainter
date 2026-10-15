@@ -30,10 +30,23 @@ Check that `apps/<id>` does not exist yet.
 - `cargo build` succeeds.
 - `cargo run -p inpainter -- --app <id>` opens the Inpainter window with one tab labeled with the name, the empty toolbar, and only the shared components the sub-application declares. The host's common UI is all there: the tab strip with its menu button and plus, and the toolbar.
 - With no host, `printf '{"type":"shutdown"}\n' | target/debug/<id>` prints the declaration, starting with `{"type":"hello","protocol":1}` and ending with `{"type":"end"}`, and exits with status 0.
+- With no host, `printf '{"type":"ping"}\n{"type":"quit"}\n{"type":"shutdown"}\n' | target/debug/<id>` prints the declaration, then `{"type":"pong"}` and `{"type":"quit_ready"}`. The template answers both; a scaffold keeps those answers, or the host shows it as not responding and its window cannot close.
 
 ## What a scaffold does not include
 
 No tools, commands, menu rows, properties, documents, or saving. When the sub-application needs one of these, the work happens inside its own folder, and the host draws it only from what the sub-application declares. Never add a label, icon, control, or rule for one sub-application to the host.
+
+## What a sub-application can declare later
+
+After `end`, a sub-application can send these at any time; each replaces the one sent before. The types are in `protocol/src/declare.rs`, and Simple Sketch's `src/session/declare.rs` is a complete example.
+
+- `tabs` — the tab list, the active tab, and the action the plus runs. A tab reported here and not in the greeting shows the contents and panel the greeting declared for the first tab.
+- `keys`, `toolbar`, `menu`, `properties` — shortcuts, toolbar items, menu rows, and panel rows. Every control carries an `action`; when it is used the host sends `command {id, tab, arg}` with that action's id and argument, adding `value` to the argument when the control has one (a typed name, a slider's number, a sort position). A panel row's edit is `property {prop, value, preview}`. The host never reads an action's id, except the drawing surface's own `canvas.zoom_in`, `canvas.zoom_out`, `canvas.fit`, and `canvas.zoom_to_selection`, and the window's `window.maximize`.
+- `contents {kind: "canvas"}`, `document`, and `canvas` — the drawing surface. The host previews each gesture from the declared tool and sends `gesture`, `select`, and `camera`; the sub-application commits and sends the whole `document` back.
+- `ask` and `file` — a question or a file dialog. The host answers with `answer` or `file_result`.
+- `quit_ready` after `quit`, and `pong` after `ping`.
+
+The host starts each sub-application with `--data-dir <folder>`, its own folder inside Inpainter's data folder, for its preferences and recovery files.
 
 ## When the protocol cannot say something
 

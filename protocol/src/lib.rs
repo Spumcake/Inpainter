@@ -6,12 +6,15 @@
 
 use serde::{Deserialize, Serialize};
 
+mod declare;
+pub use declare::*;
+
 /// The version this crate speaks. A sub-application's first message says
 /// which version it speaks; the host accepts only this one.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// What a sub-application writes to the host, on its standard output.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppMessage {
     /// Always first. Names the protocol version the sub-application speaks.
@@ -23,16 +26,136 @@ pub enum AppMessage {
     Contents { tab: String, kind: ContentsKind },
     /// That tab uses the host's properties panel, on this side.
     Panel { tab: String, side: PanelSide },
+    /// The whole document after a change. `camera` is present when a sketch
+    /// is opened or created.
+    Document {
+        tab: String,
+        sketch: serde_json::Value,
+        selection: Vec<u64>,
+        active_canvas: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        camera: Option<DocumentCamera>,
+    },
+    /// A file dialog for the host to open.
+    File {
+        id: String,
+        kind: FileKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        folder: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filter: Option<FileFilter>,
+    },
     /// The declaration is complete.
     End,
+    /// Every shortcut, replacing the ones declared before.
+    Keys(Keys),
+    /// The selected tab's toolbar.
+    Toolbar(Toolbar),
+    /// The hamburger menu of this sub-application's tabs.
+    Menu { rows: Vec<MenuEntry> },
+    /// The selected tab's properties panel.
+    Properties(Properties),
+    /// The tab list, which replaces the tabs reported before.
+    Tabs(Tabs),
+    /// The drawing surface's current tool and the text being typed.
+    Canvas(Canvas),
+    /// A question for the host to show. The host answers once.
+    Ask(Ask),
+    /// Every unsaved document has been resolved after `quit`. The host may exit.
+    QuitReady,
+    /// The answer to `ping`.
+    Pong,
 }
 
 /// What the host writes to a sub-application, on its standard input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HostMessage {
+    /// A menu row, toolbar button, shortcut, the plus, a tab's close mark,
+    /// selecting a tab, or an outliner action. `new_sketch` creates a sketch.
+    Command {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tab: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        arg: Option<serde_json::Value>,
+        /// The object a canvas menu row was chosen on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<u64>,
+        viewport: [f64; 2],
+    },
+    /// One finished gesture.
+    Gesture {
+        tab: String,
+        gesture: serde_json::Value,
+    },
+    /// A click, a marquee, or a cancelled drag on the drawing surface. The
+    /// host shows the selection the next `document` states.
+    Select { tab: String, op: SelectOp },
+    /// The tab's camera after a pan, zoom, or fit. Not a history step.
+    Camera {
+        tab: String,
+        origin: [f64; 2],
+        zoom: f64,
+    },
+    /// The contents area's size, once it is first known.
+    Viewport { viewport: [f64; 2] },
+    /// The button the person chose on an `ask`.
+    Answer { id: String, button: String },
+    /// A panel or toolbar edit. `preview` is true while a slider is held.
+    Property {
+        prop: serde_json::Value,
+        value: serde_json::Value,
+        preview: bool,
+    },
+    /// The path the host's file dialog returned. Absent when the person cancelled.
+    FileResult {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
+    /// The window's close was pressed. The window stays until `quit_ready`.
+    Quit,
+    /// Sent every second. The answer is `pong`.
+    Ping,
     /// The window is closing. Exit.
     Shutdown,
+}
+
+/// What a selection message does, as the drawing surface's select tool does it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum SelectOp {
+    /// A click on an object. `add` toggles it in the selection.
+    Click { node: u64, add: bool },
+    /// A click on nothing.
+    Clear,
+    /// Everything a marquee touches, added to `base` when `add`.
+    Marquee {
+        min: [f64; 2],
+        max: [f64; 2],
+        add: bool,
+        base: Vec<u64>,
+    },
+    /// Puts a selection back, as Escape during a drag does.
+    Replace { nodes: Vec<u64> },
+}
+
+/// The camera sent with a document when a sketch is opened or created.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DocumentCamera {
+    pub origin: [f64; 2],
+    pub zoom: f64,
+}
+
+/// Which file dialog the host should open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileKind {
+    Open,
+    Save,
 }
 
 /// A shared component the host draws in a contents area.
@@ -40,6 +163,8 @@ pub enum HostMessage {
 #[serde(rename_all = "snake_case")]
 pub enum ContentsKind {
     Grid,
+    /// The drawing surface: the grid, the document, and its tools.
+    Canvas,
 }
 
 /// Where the properties panel sits. Only the right side has a reference.
@@ -144,6 +269,18 @@ impl Declaration {
                     Accept::Failed
                 }
             }
+            // Later messages. They do not change the declaration the window draws.
+            AppMessage::Document { .. }
+            | AppMessage::File { .. }
+            | AppMessage::Keys(_)
+            | AppMessage::Toolbar(_)
+            | AppMessage::Menu { .. }
+            | AppMessage::Properties(_)
+            | AppMessage::Tabs(_)
+            | AppMessage::Canvas(_)
+            | AppMessage::Ask(_)
+            | AppMessage::QuitReady
+            | AppMessage::Pong => Accept::More,
             AppMessage::End => Accept::Ready,
         }
     }
@@ -300,10 +437,7 @@ mod tests {
     #[test]
     fn manifest_refuses_id_outside_lowercase_digits_and_hyphens() {
         let text = manifest_text("Sketch", "sketch", 1);
-        assert!(
-            parse_manifest(&text).is_err(),
-            "uppercase id was accepted"
-        );
+        assert!(parse_manifest(&text).is_err(), "uppercase id was accepted");
     }
 
     /// Catches an executable that is a path.
@@ -322,9 +456,6 @@ mod tests {
     #[test]
     fn manifest_refuses_protocol_other_than_1() {
         let text = manifest_text("sketch", "sketch", 2);
-        assert!(
-            parse_manifest(&text).is_err(),
-            "protocol 2 was accepted"
-        );
+        assert!(parse_manifest(&text).is_err(), "protocol 2 was accepted");
     }
 }

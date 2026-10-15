@@ -1,3 +1,15 @@
 [workspace]
 resolver = "3"
-members = ["host", "protocol", "apps/template", "apps/simple-sketch"]
+members = [
+    "host",
+    "protocol",
+    "draw",
+    "client",
+    "apps/template",
+    "apps/simple-sketch",
+]
+
+# octotablet 0.1.0 binds tablet protocol versions it cannot parse, which
+# closes the window's Wayland connection. See host/vendor/octotablet/PATCHED.md.
+[patch.crates-io]
+octotablet = { path = "host/vendor/octotablet" }

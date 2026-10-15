@@ -16,6 +16,10 @@ pub(crate) struct IconSpec<'a> {
 /// the clockwise quarter turns.
 const TURNED_ICONS: &[(&str, &str, u8)] = &[("flip-vertical", "flip", 1)];
 
+/// Icons the Iconoir pack does not have, drawn by the toolbar in Iconoir's
+/// style instead of taken from the font.
+pub(crate) const DRAWN_ICONS: &[&str] = &["brush"];
+
 pub(crate) fn icon_spec(name: &str) -> IconSpec<'_> {
     if let Some((_, glyph, turns)) = TURNED_ICONS.iter().find(|(alias, _, _)| *alias == name) {
         return IconSpec {
@@ -212,5 +216,42 @@ pub(crate) fn panel_shortcut_pressed(input: &egui::InputState) -> bool {
             return false;
         }
         matches!(chord.key, Key::F4) && input.key_pressed(egui::Key::F4)
+    })
+}
+
+/// Whether this frame pressed a declared shortcut. `shift: None` ignores Shift.
+pub(crate) fn chord_pressed(input: &egui::InputState, chord: &protocol::Chord) -> bool {
+    if input.modifiers.command != chord.command || input.modifiers.alt != chord.alt {
+        return false;
+    }
+    if let Some(shift) = chord.shift
+        && input.modifiers.shift != shift
+    {
+        return false;
+    }
+    key_named(&chord.key).is_some_and(|key| input.key_pressed(key))
+}
+
+/// The key a declared shortcut names.
+fn key_named(name: &str) -> Option<egui::Key> {
+    use egui::Key;
+    Some(match name {
+        "Digit0" => Key::Num0,
+        "Digit1" => Key::Num1,
+        "Digit2" => Key::Num2,
+        "Digit3" => Key::Num3,
+        "Digit4" => Key::Num4,
+        "Digit5" => Key::Num5,
+        "Digit6" => Key::Num6,
+        "Digit7" => Key::Num7,
+        "Digit8" => Key::Num8,
+        "Digit9" => Key::Num9,
+        "BracketLeft" => Key::OpenBracket,
+        "BracketRight" => Key::CloseBracket,
+        "Left" => Key::ArrowLeft,
+        "Right" => Key::ArrowRight,
+        "Up" => Key::ArrowUp,
+        "Down" => Key::ArrowDown,
+        other => return Key::from_name(other),
     })
 }
