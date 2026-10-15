@@ -14,7 +14,7 @@ use protocol::{AppMessage, FileKind, HostMessage};
 use serde_json::Value;
 use simple_sketch::serve::Server;
 use std::io::{BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 
 const VIEWPORT: [f64; 2] = [1280.0, 720.0];
@@ -219,9 +219,10 @@ struct Link {
 
 impl Link {
     fn start() -> Result<Self, String> {
-        let mut executable = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        executable.pop();
-        executable.push("target/debug/simple-sketch");
+        // Built beside this program, in the same `target` folder.
+        let executable = std::env::current_exe()
+            .map_err(|error| error.to_string())?
+            .with_file_name("simple-sketch");
         let mut child = Command::new(&executable)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

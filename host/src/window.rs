@@ -285,6 +285,7 @@ impl HostWindow {
     fn show_asks(&mut self, ctx: &egui::Context) {
         let order: Vec<usize> = std::iter::once(self.selected)
             .chain((0..self.apps.len()).filter(|app| *app != self.selected))
+            .filter(|app| *app < self.apps.len())
             .collect();
         for app in order {
             let Some(question) = self.apps[app].running.declared.ask.clone() else {

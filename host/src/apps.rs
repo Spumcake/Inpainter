@@ -13,12 +13,16 @@ pub struct App {
 
 /// Folders that hold one folder per sub-application, in search order:
 /// `apps` beside the host's executable, then, in a development build, the
-/// workspace's own `apps` folder.
+/// workspace's own `apps` folder, found from the executable's own place.
 fn roots(exe_dir: &Path) -> Vec<PathBuf> {
     #[allow(unused_mut)]
     let mut roots = vec![exe_dir.join("apps")];
+    // `target/debug/inpainter` sits two folders below the workspace, which
+    // stays true when the workspace is moved after it was built.
     #[cfg(debug_assertions)]
-    roots.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../apps"));
+    if let Some(workspace) = exe_dir.parent().and_then(Path::parent) {
+        roots.push(workspace.join("apps"));
+    }
     roots
 }
 
