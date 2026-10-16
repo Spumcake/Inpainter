@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
+mod assist;
 mod declare;
 pub(crate) use declare::{action_named, command_named, session_value, tool_named};
 

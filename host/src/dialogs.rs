@@ -35,3 +35,12 @@ pub(crate) fn pick_save(
     }
     dialog.set_parent(parent).save_file()
 }
+
+/// Several files to open at once, for the assistant's attachments.
+pub(crate) fn pick_files(parent: &eframe::Frame, filter: &FileFilter) -> Vec<PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter(&filter.name, &filter.extensions)
+        .set_parent(parent)
+        .pick_files()
+        .unwrap_or_default()
+}

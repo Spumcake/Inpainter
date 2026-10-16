@@ -55,6 +55,11 @@ impl Chrome {
         self.recoveries = offers;
     }
 
+    /// The replace question is waiting for an answer.
+    pub fn replacing(&self) -> bool {
+        self.replace.is_some()
+    }
+
     pub fn close(&mut self, session: &mut Session, id: SketchId) -> CloseEffect {
         let effect = session.request_close(id);
         match effect {

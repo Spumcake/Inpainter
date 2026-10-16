@@ -382,6 +382,12 @@ pub struct TabEntry {
     /// The close mark waits: the only tab, clean.
     #[serde(default)]
     pub close_waits: bool,
+    /// The file the tab shows, once it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The tab is a document that can be saved to a file.
+    #[serde(default)]
+    pub saves: bool,
 }
 
 /// The sub-application's tabs, which replace those it reported before.

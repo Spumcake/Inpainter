@@ -7,6 +7,17 @@
 //! must equal what an in-process `Server` (the same code behind the process)
 //! sends for the same messages, and the two saved files must be identical.
 //! The sketch must not exist before `new_sketch`. Temporary files are removed.
+//!
+//! Then it drives every tool of Simple Sketch's skills through `invoke`, the
+//! way the assistant does, comparing every reply, the undo of a whole
+//! request, and a saved file with the in-process session (`assist.rs`);
+//! reopens files and keeps an untitled sketch as a workspace does, with
+//! `--restore`, `open`, `keep`, and `kept` (`assist.rs`); and checks that
+//! every part of Simple Sketch's hand surface that changes a sketch's
+//! contents has a tool (`coverage.rs`).
+
+mod assist;
+mod coverage;
 
 use draw::document::{ColorId, Dynamics, NodeId, Sample};
 use draw::gesture::{Gesture, GestureKind};
@@ -17,7 +28,7 @@ use std::io::{BufRead, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 
-const VIEWPORT: [f64; 2] = [1280.0, 720.0];
+pub(crate) const VIEWPORT: [f64; 2] = [1280.0, 720.0];
 
 fn main() {
     let dir = std::env::temp_dir().join(format!("inpainter-no-host-{}", std::process::id()));
@@ -25,7 +36,7 @@ fn main() {
     let result = check(&dir);
     let _ = std::fs::remove_dir_all(&dir);
     match result {
-        Ok(()) => println!("no-host check: passed"),
+        Ok(()) => println!("no-host check: passed (protocol, every skill tool, one undo per request, workspace, coverage)"),
         Err(message) => {
             eprintln!("no-host check: {message}");
             std::process::exit(1);
@@ -34,10 +45,17 @@ fn main() {
 }
 
 fn check(dir: &Path) -> Result<(), String> {
-    let mut link = Link::start()?;
+    hand_check(dir)?;
+    coverage::check()?;
+    let saved = assist::check(dir)?;
+    assist::workspace(dir, &saved)
+}
+
+fn hand_check(dir: &Path) -> Result<(), String> {
+    let mut link = Link::start(&[])?;
     let mut oracle = Server::new(None);
 
-    let expected = oracle.greeting();
+    let expected = as_read(oracle.greeting());
     let greeting = link.read_count(expected.len())?;
     if greeting != expected {
         return Err("the declaration does not match the session".into());
@@ -155,26 +173,52 @@ fn check(dir: &Path) -> Result<(), String> {
 
 /// Sends one message to the process and to the in-process session, and
 /// returns the process's replies once they match.
-fn exchange(
+pub(crate) fn exchange(
     link: &mut Link,
     oracle: &mut Server,
     message: HostMessage,
 ) -> Result<Vec<AppMessage>, String> {
-    let expected = oracle
-        .handle(message.clone())
-        .ok_or("the session stopped")?;
+    let expected = as_read(
+        oracle
+            .handle(message.clone())
+            .ok_or("the session stopped")?,
+    );
     link.send(&message)?;
     let replies = link.read_count(expected.len())?;
     if replies != expected {
+        let differs = replies
+            .iter()
+            .zip(&expected)
+            .find(|(reply, wanted)| reply != wanted)
+            .map(|(reply, wanted)| {
+                let cut = |message: &AppMessage| -> String {
+                    protocol::encode_app_message(message).chars().take(400).collect()
+                };
+                format!("\n  process: {}\n  session: {}", cut(reply), cut(wanted))
+            })
+            .unwrap_or_else(|| format!(" ({} replies, not {})", replies.len(), expected.len()));
         return Err(format!(
-            "after {} the process replied differently from the session",
+            "after {} the process replied differently from the session{differs}",
             protocol::encode_host_message(&message).trim_end()
         ));
     }
     Ok(replies)
 }
 
-fn document_of(messages: &[AppMessage]) -> Option<(String, Value, bool)> {
+/// The session's messages as they read back after crossing the pipe.
+/// `serde_json` may read a number one unit in its last place away from the
+/// one it wrote, so both sides are compared after one write and read.
+pub(crate) fn as_read(messages: Vec<AppMessage>) -> Vec<AppMessage> {
+    messages
+        .into_iter()
+        .map(|message| {
+            let line = protocol::encode_app_message(&message);
+            protocol::parse_app_message(line.trim_end()).unwrap_or(message)
+        })
+        .collect()
+}
+
+pub(crate) fn document_of(messages: &[AppMessage]) -> Option<(String, Value, bool)> {
     messages.iter().rev().find_map(|message| match message {
         AppMessage::Document {
             tab,
@@ -194,7 +238,7 @@ fn sketch_existed_before(greeting: &[AppMessage], tab: &str) -> bool {
     })
 }
 
-fn command(id: &str, tab: Option<&str>, arg: Option<String>) -> HostMessage {
+pub(crate) fn command(id: &str, tab: Option<&str>, arg: Option<String>) -> HostMessage {
     HostMessage::Command {
         id: id.to_string(),
         tab: tab.map(str::to_string),
@@ -204,26 +248,27 @@ fn command(id: &str, tab: Option<&str>, arg: Option<String>) -> HostMessage {
     }
 }
 
-fn gesture(tab: &str, gesture: Gesture) -> HostMessage {
+pub(crate) fn gesture(tab: &str, gesture: Gesture) -> HostMessage {
     HostMessage::Gesture {
         tab: tab.to_string(),
         gesture: gesture.to_value(),
     }
 }
 
-struct Link {
+pub(crate) struct Link {
     child: Child,
     stdout: std::io::BufReader<std::process::ChildStdout>,
     stdin: Option<ChildStdin>,
 }
 
 impl Link {
-    fn start() -> Result<Self, String> {
+    pub(crate) fn start(args: &[&str]) -> Result<Self, String> {
         // Built beside this program, in the same `target` folder.
         let executable = std::env::current_exe()
             .map_err(|error| error.to_string())?
             .with_file_name("simple-sketch");
         let mut child = Command::new(&executable)
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -238,7 +283,7 @@ impl Link {
         })
     }
 
-    fn send(&mut self, message: &HostMessage) -> Result<(), String> {
+    pub(crate) fn send(&mut self, message: &HostMessage) -> Result<(), String> {
         let encoded = protocol::encode_host_message(message);
         let stdin = self.stdin.as_mut().ok_or("stdin closed")?;
         stdin
@@ -247,7 +292,7 @@ impl Link {
             .map_err(|error| error.to_string())
     }
 
-    fn read_count(&mut self, count: usize) -> Result<Vec<AppMessage>, String> {
+    pub(crate) fn read_count(&mut self, count: usize) -> Result<Vec<AppMessage>, String> {
         (0..count).map(|_| self.read_message()).collect()
     }
 
@@ -260,7 +305,7 @@ impl Link {
             .map_err(|error| format!("a reply did not parse: {}", error.line))
     }
 
-    fn finish(mut self) -> Result<(), String> {
+    pub(crate) fn finish(mut self) -> Result<(), String> {
         drop(self.stdin.take());
         let status = self.child.wait().map_err(|error| error.to_string())?;
         if status.success() {
@@ -280,7 +325,7 @@ impl Drop for Link {
     }
 }
 
-fn brush_gesture(canvas: u64, source: u64) -> Gesture {
+pub(crate) fn brush_gesture(canvas: u64, source: u64) -> Gesture {
     Gesture {
         kind: GestureKind::Brush {
             canvas: Some(NodeId::new(canvas)),
@@ -335,7 +380,7 @@ fn canvas_node(sketch: &Value) -> Option<&Value> {
         .find(|node| node.get("kind").and_then(Value::as_str) == Some("canvas"))
 }
 
-fn canvas_and_source(sketch: &Value) -> Option<(u64, u64)> {
+pub(crate) fn canvas_and_source(sketch: &Value) -> Option<(u64, u64)> {
     let canvas = canvas_node(sketch)?;
     let id = canvas.get("id")?.as_u64()?;
     let source = canvas
@@ -350,7 +395,7 @@ fn canvas_padding(sketch: &Value) -> Option<f64> {
     canvas_node(sketch)?.get("padding")?.as_f64()
 }
 
-fn stroke_counts(sketch: &Value) -> (usize, usize) {
+pub(crate) fn stroke_counts(sketch: &Value) -> (usize, usize) {
     let mut strokes = 0;
     let mut erases = 0;
     for node in sketch

@@ -3,19 +3,23 @@
 //! startup, the preferences and recovery upkeep, and the panic hook are the
 //! ones `canvas.rs` ran; the window is the host's. Each host message runs the
 //! session call the window's widget made, and the declarations that changed
-//! are sent back.
+//! are sent back. The assistant's `invoke` runs one of the skills in
+//! `skills.rs`; a workspace's `open` and `keep` open a file in a tab and give
+//! a tab a file through Simple Sketch's own Save.
 
 use crate::ask::Chrome;
+use crate::look::Looker;
 use crate::registry::Tool;
 use crate::session::{
-    FileIntent, SaveResult, Session, action_named, command_named, session_value, tool_named,
+    FileIntent, RecoveryOffer, SaveResult, Session, action_named, command_named, session_value,
+    tool_named,
 };
 use draw::document::{ColorId, NodeId, SketchId};
 use draw::gesture::{Gesture, GestureKind};
 use draw::{PropId, PropValue};
 use protocol::{
     AppMessage, Ask, Canvas, ContentsKind, DocumentCamera, FileFilter, FileKind, HostMessage, Keys,
-    MenuEntry, PanelSide, Properties, SelectOp, Tabs, Toolbar,
+    MenuEntry, PanelSide, Properties, SelectOp, Tabs, Toolbar, ToolResult,
 };
 use serde_json::Value;
 use std::io::{BufRead, Write};
@@ -56,20 +60,40 @@ pub struct Server {
     /// The host's contents area, once it is known.
     viewport: Option<[f64; 2]>,
     sent: Sent,
+    /// Draws the looking tool's pictures.
+    looker: Looker,
+    /// Started with `--restore` and no `open` yet: the session's opening
+    /// blank is not a tab, and its recovery offers wait for a tab to show.
+    hidden: bool,
+    deferred: Vec<RecoveryOffer>,
+    /// A `keep` waiting on Simple Sketch's own Save: the host's tab and the sketch.
+    keeping: Option<(String, SketchId)>,
 }
 
 impl Server {
     /// The session `canvas.rs` started, with its preferences, recent files,
     /// and recovery offers read from `data_dir` when there is one.
     pub fn new(data_dir: Option<&std::path::Path>) -> Self {
+        Self::start(data_dir, false)
+    }
+
+    /// As `new`, or, with `restore`, opening no sketch of its own until the
+    /// host sends `open`, as when a workspace is reopened. Recovery offers
+    /// then wait until that first tab exists.
+    pub fn start(data_dir: Option<&std::path::Path>, restore: bool) -> Self {
         let mut session = Session::new();
         let mut chrome = Chrome::new();
+        let mut deferred = Vec::new();
         if let Some(dir) = data_dir {
             session.set_data_dir(dir);
             let (tools, recent) = crate::prefs::load_dir(dir);
             session.restore_tools(tools);
             session.set_recent(recent);
-            chrome.set_recoveries(session.recovery_offers());
+            if restore {
+                deferred = session.recovery_offers();
+            } else {
+                chrome.set_recoveries(session.recovery_offers());
+            }
         }
         Self {
             session,
@@ -78,16 +102,25 @@ impl Server {
             next_request: 1,
             viewport: None,
             sent: Sent::default(),
+            looker: Looker::new(),
+            hidden: restore,
+            deferred,
+            keeping: None,
         }
     }
 
-    /// The declaration, then the open sketch's document and everything the
-    /// host draws for it.
+    /// The declaration, with the skills, then the open sketch's document and
+    /// everything the host draws for it.
     pub fn greeting(&mut self) -> Vec<AppMessage> {
         let mut messages = vec![AppMessage::Hello {
             protocol: protocol::PROTOCOL_VERSION,
         }];
-        for tab in self.session.tabs() {
+        let tabs = if self.hidden {
+            Vec::new()
+        } else {
+            self.session.tabs()
+        };
+        for tab in tabs {
             let id = tab_id(tab.id);
             messages.push(AppMessage::Tab {
                 id: id.clone(),
@@ -102,6 +135,9 @@ impl Server {
                 side: PanelSide::Right,
             });
         }
+        messages.push(AppMessage::Skills {
+            skills: crate::skills::skills(),
+        });
         messages.push(AppMessage::End);
         messages.extend(self.updates(true));
         messages
@@ -111,9 +147,64 @@ impl Server {
     pub fn handle(&mut self, message: HostMessage) -> Option<Vec<AppMessage>> {
         let mut replies = Vec::new();
         let mut camera = false;
+        let mut last = Vec::new();
+        if is_hand(&message) {
+            // A change by hand ends a request's undo step.
+            self.session.close_groups();
+        }
+        if self.hidden && is_tab_work(&message) {
+            return Some(Vec::new());
+        }
         match message {
             HostMessage::Shutdown => return None,
             HostMessage::Ping => return Some(vec![AppMessage::Pong]),
+            HostMessage::Invoke {
+                call,
+                tab,
+                tool,
+                input,
+                group,
+            } => last = self.invoke(call, &tab, &tool, &input, &group),
+            HostMessage::Open { path } => {
+                let known: Vec<SketchId> = if self.hidden {
+                    Vec::new()
+                } else {
+                    self.session.tabs().iter().map(|tab| tab.id).collect()
+                };
+                self.open(path);
+                // A tab new since the greeting is declared as the greeting's
+                // were, before the `tabs` that lists it.
+                if !self.hidden {
+                    for tab in self.session.tabs() {
+                        if !known.contains(&tab.id) {
+                            replies.push(AppMessage::Contents {
+                                tab: tab_id(tab.id),
+                                kind: ContentsKind::Canvas,
+                            });
+                            replies.push(AppMessage::Panel {
+                                tab: tab_id(tab.id),
+                                side: PanelSide::Right,
+                            });
+                        }
+                    }
+                }
+            }
+            HostMessage::Keep { tab } => match sketch_named(&self.session, Some(&tab)).filter(|_| !self.hidden) {
+                None => last.push(AppMessage::Kept { tab, path: None }),
+                Some(id) => match self.session.file_path(id) {
+                    Some(path) => last.push(AppMessage::Kept {
+                        tab,
+                        path: Some(path_text(path)),
+                    }),
+                    None => {
+                        self.session.request_save_dialog(id, false);
+                        self.keeping = Some((tab, id));
+                        if let Some(request) = self.file_request() {
+                            replies.push(request);
+                        }
+                    }
+                },
+            },
             HostMessage::Viewport { viewport } => {
                 let first = self.viewport.is_none();
                 self.note_viewport(viewport);
@@ -183,7 +274,100 @@ impl Server {
         self.session.publish_emergency();
         persist_tools(&mut self.session);
         replies.extend(self.updates(camera));
+        replies.extend(last);
+        if let Some(kept) = self.resolve_keep() {
+            replies.push(kept);
+        }
         Some(replies)
+    }
+
+    /// One tool of a skill on `tab`, as one undo step with the rest of
+    /// `group`. A tab other than the one shown is worked on and its document
+    /// sent, and the shown tab stays shown. Returns that document, if any,
+    /// and the result.
+    fn invoke(
+        &mut self,
+        call: String,
+        tab: &str,
+        tool: &str,
+        input: &Value,
+        group: &str,
+    ) -> Vec<AppMessage> {
+        let answer = |ok: bool, output: Value, images: Vec<String>| {
+            AppMessage::ToolResult(ToolResult {
+                call: call.clone(),
+                ok,
+                output,
+                images,
+            })
+        };
+        let refuse = |reason: String| answer(false, serde_json::json!({ "error": reason }), Vec::new());
+        let Some(sketch) = sketch_named(&self.session, Some(tab)).filter(|_| !self.hidden) else {
+            return vec![refuse(format!("Simple Sketch has no tab {tab}"))];
+        };
+        let Some((_, skill, name)) = protocol::split_tool_key(tool) else {
+            return vec![refuse(format!("{tool} is not a tool key"))];
+        };
+        let shown = self.session.active_id();
+        self.session.activate(sketch);
+        self.session.assist_settle();
+        self.session.join_group(sketch, group);
+        let outcome = crate::skills::Desk {
+            session: &mut self.session,
+            looker: &mut self.looker,
+            viewport: self.viewport,
+        }
+        .run(skill, name, input);
+        let mut out = Vec::new();
+        if shown != sketch {
+            let record = self.session.active_sketch();
+            out.push(AppMessage::Document {
+                tab: tab_id(record.id()),
+                sketch: record.sketch.snapshot_value(record.id(), record.name()),
+                selection: record.selection().iter().map(|node| node.get()).collect(),
+                active_canvas: record.active_canvas().map(NodeId::get),
+                camera: None,
+            });
+            self.session.activate(shown);
+        }
+        out.push(answer(outcome.ok, outcome.output, outcome.images));
+        out
+    }
+
+    /// A workspace's `open`: that file in a tab, or the sketch Simple Sketch
+    /// opens of its own at start, a new untitled one.
+    fn open(&mut self, path: Option<String>) {
+        match (self.hidden, path) {
+            (true, Some(path)) => {
+                if self.session.open_initial(std::path::Path::new(&path)) {
+                    self.reveal();
+                }
+            }
+            (true, None) => self.reveal(),
+            (false, Some(path)) => {
+                self.session.open_path(std::path::Path::new(&path));
+            }
+            (false, None) => {
+                self.session.new_sketch();
+            }
+        }
+    }
+
+    /// The first tab of a restored workspace exists: recovery can be offered.
+    fn reveal(&mut self) {
+        self.hidden = false;
+        self.chrome.set_recoveries(std::mem::take(&mut self.deferred));
+    }
+
+    /// The answer to a `keep` once its Save is done or cancelled.
+    fn resolve_keep(&mut self) -> Option<AppMessage> {
+        let (_, id) = self.keeping.as_ref()?;
+        if self.waiting.is_some() || self.chrome.replacing() {
+            return None;
+        }
+        let path = self.session.file_path(*id).map(path_text);
+        let (tab, _) = self.keeping.take()?;
+        Some(AppMessage::Kept { tab, path })
     }
 
     fn note_viewport(&mut self, viewport: [f64; 2]) {
@@ -320,6 +504,12 @@ impl Server {
     /// brings its camera.
     fn updates(&mut self, camera: bool) -> Vec<AppMessage> {
         let mut out = Vec::new();
+        if self.hidden {
+            // No tab yet: only a question, such as a file that could not
+            // be opened, or the end of a quit.
+            self.chrome_updates(&mut out);
+            return out;
+        }
         let active = self.session.active_id();
         let first_view = !self.sent.shown.contains(&active);
         if first_view && let Some(viewport) = self.viewport {
@@ -392,6 +582,11 @@ impl Server {
             out.push(AppMessage::Canvas(canvas.clone()));
             self.sent.canvas = Some(canvas);
         }
+        self.chrome_updates(&mut out);
+        out
+    }
+
+    fn chrome_updates(&mut self, out: &mut Vec<AppMessage>) {
         let ask = self.chrome.current(&mut self.session);
         if ask != self.sent.ask {
             if let Some(ask) = &ask {
@@ -402,14 +597,14 @@ impl Server {
         if self.chrome.take_quit_ready() {
             out.push(AppMessage::QuitReady);
         }
-        out
     }
 }
 
 pub fn run() {
     install_panic_hook();
     let data_dir = data_dir_from_args();
-    let mut server = Server::new(data_dir.as_deref());
+    let restore = std::env::args().any(|arg| arg == protocol::RESTORE_FLAG);
+    let mut server = Server::start(data_dir.as_deref(), restore);
     for message in server.greeting() {
         send(&message);
     }
@@ -463,6 +658,31 @@ fn persist_tools(session: &mut Session) {
     {
         session.clear_prefs_dirty();
     }
+}
+
+/// A message from the person's own hand: it ends a request's undo step.
+/// Text metrics and choosing a tab are not edits, and the host sends them
+/// while a request runs.
+fn is_hand(message: &HostMessage) -> bool {
+    match message {
+        HostMessage::Command { id, .. } => !matches!(id.as_str(), "text_metrics" | "select_tab"),
+        HostMessage::Gesture { .. } | HostMessage::Select { .. } | HostMessage::Property { .. } => {
+            true
+        }
+        _ => false,
+    }
+}
+
+/// A message about a tab, which waits for one while none is open.
+fn is_tab_work(message: &HostMessage) -> bool {
+    matches!(
+        message,
+        HostMessage::Command { .. }
+            | HostMessage::Gesture { .. }
+            | HostMessage::Select { .. }
+            | HostMessage::Camera { .. }
+            | HostMessage::Property { .. }
+    )
 }
 
 fn sketch_named(session: &Session, tab: Option<&str>) -> Option<SketchId> {

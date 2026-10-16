@@ -102,6 +102,14 @@ impl Doc<'_> {
         }
     }
 
+    /// The drawing surface's own commands, which only move the tab's camera.
+    pub(crate) fn moves_camera_only(id: &str) -> bool {
+        matches!(
+            id,
+            "canvas.zoom_in" | "canvas.zoom_out" | "canvas.fit" | "canvas.zoom_to_selection"
+        )
+    }
+
     /// Sends a declared action, as the window ran a session command.
     pub(crate) fn run(&mut self, action: &Action, node: Option<u64>) {
         match action.id.as_str() {

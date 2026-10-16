@@ -24,6 +24,16 @@ pub struct Record {
     recovery_file: Option<SketchId>,
     undo: Vec<Step>,
     redo: Vec<Step>,
+    /// The assistant's request whose changes merge into one undo step.
+    group: Option<Group>,
+}
+
+/// An open request: its id, the undo length when it began, and whether the
+/// top undo step is already the request's merged batch.
+struct Group {
+    id: String,
+    base: usize,
+    merged: bool,
 }
 
 impl Record {
@@ -40,6 +50,7 @@ impl Record {
             recovery_file: None,
             undo: Vec::new(),
             redo: Vec::new(),
+            group: None,
         }
     }
 
@@ -57,6 +68,7 @@ impl Record {
             recovery_file: None,
             undo: Vec::new(),
             redo: Vec::new(),
+            group: None,
         }
     }
 
@@ -102,7 +114,7 @@ impl Record {
         };
         self.dirty = true;
         self.redo.clear();
-        self.undo.push(step);
+        self.push_undo(step);
         true
     }
 
@@ -195,10 +207,51 @@ impl Record {
         self.dirty = true;
         self.redo.clear();
         self.sketch.apply(&step);
+        self.push_undo(step);
+    }
+
+    /// Every change from now until another group, or until `close_group`,
+    /// is one undo step: one undo takes the whole request back.
+    pub fn join_group(&mut self, id: &str) {
+        if self.group.as_ref().is_some_and(|group| group.id == id) {
+            return;
+        }
+        self.group = Some(Group {
+            id: id.to_string(),
+            base: self.undo.len(),
+            merged: false,
+        });
+    }
+
+    /// A change by hand, or the end of a request: later changes are their own steps.
+    pub fn close_group(&mut self) {
+        self.group = None;
+    }
+
+    /// Pushes a step, folding it into the open group's step when it has one.
+    fn push_undo(&mut self, step: Step) {
         self.undo.push(step);
+        let Some(group) = self.group.as_mut() else {
+            return;
+        };
+        if self.undo.len() < group.base + 2 {
+            return;
+        }
+        let last = self.undo.pop().expect("two steps");
+        let first = self.undo.pop().expect("two steps");
+        let merged = match first {
+            Step::Batch(mut steps) if group.merged => {
+                steps.push(last);
+                Step::Batch(steps)
+            }
+            first => Step::Batch(vec![first, last]),
+        };
+        group.merged = true;
+        self.undo.push(merged);
     }
 
     pub fn undo(&mut self) -> bool {
+        self.group = None;
         let Some(step) = self.undo.pop() else {
             return false;
         };
@@ -209,6 +262,7 @@ impl Record {
     }
 
     pub fn redo(&mut self) -> bool {
+        self.group = None;
         let Some(step) = self.redo.pop() else {
             return false;
         };

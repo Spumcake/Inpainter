@@ -4,14 +4,28 @@
 //! declared. Its frame never waits on a sub-application.
 
 use crate::canvas::{CANVAS, Surface};
+use crate::chat::{self, Chat, ChatEvent};
 use crate::doc::{Doc, Live};
 use crate::panel::Sent;
 use crate::process::Running;
+use crate::route::{self, Routing};
 use crate::tablet::Tablet;
 use crate::tabs::{StripTab, TabEvent};
+use crate::workspace::{ModelChoice, Settings};
 use crate::{ask, grid, icons, panel, tabs, toolbar, widgets};
+use assistant::{Assistant, Command};
 use eframe::egui::{self, Color32, Event, Key, Rect};
-use protocol::{Action, ContentsKind, FileKind, HostMessage, PanelSide};
+use protocol::{Action, ContentsKind, FileKind, HostMessage, MenuEntry, PanelSide};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+mod flows;
+#[cfg(test)]
+mod checks;
+
+/// How strongly a locked control is faded: the toolbar's own waiting gray.
+const LOCKED_ALPHA: f32 = 0.33;
 
 /// The application id: the desktop file, icon, and file-type names on Linux.
 pub const APP_ID: &str = "io.github.spumcake.Inpainter";
@@ -22,10 +36,22 @@ fn window_icon() -> egui::IconData {
     eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/128.png")).unwrap_or_default()
 }
 
-/// A started sub-application: the name its manifest gives, and its process.
+/// A started sub-application: its manifest's id and name, its program, and
+/// its process.
 pub struct Started {
+    pub id: String,
     pub name: String,
+    /// None in frame tests, which start no program.
+    pub executable: Option<PathBuf>,
     pub running: Running,
+}
+
+/// A sub-application to start: what [`Started`] keeps besides its process.
+#[derive(Clone)]
+pub(crate) struct AppSpec {
+    pub id: String,
+    pub name: String,
+    pub executable: Option<PathBuf>,
 }
 
 pub fn run(apps: Vec<Started>) -> eframe::Result<()> {
@@ -36,7 +62,9 @@ pub fn run(apps: Vec<Started>) -> eframe::Result<()> {
             // this id, which is the desktop file's name.
             .with_app_id(APP_ID)
             .with_icon(window_icon())
-            .with_inner_size([1280.0, 800.0])
+            // The shell keeps the 1280-point width it had before the chat
+            // panel, which takes a quarter of the window, joined it.
+            .with_inner_size([1712.0, 800.0])
             .with_min_inner_size([640.0, 480.0]),
         persist_window: false,
         // Ink is painted as raw meshes, which egui does not feather.
@@ -65,14 +93,28 @@ struct HostWindow {
     viewport_sent: Vec<bool>,
     /// File dialogs open in the real window. Frame tests answer them instead.
     native_dialogs: bool,
-    /// The window's close was pressed and sub-applications are resolving
-    /// their unsaved work.
-    quitting: bool,
     /// Ctrl/Cmd+C, X, or V already arrived as a copy, cut, or paste event.
     /// The key-up still comes through, and must not run the command again.
     copy_press: bool,
     cut_press: bool,
     paste_press: bool,
+    ctx: egui::Context,
+    /// The sub-applications started at launch, which Clear Workspace starts again.
+    launch: Vec<AppSpec>,
+    /// The contents and panel each sub-application declared for its first
+    /// tab, by id, so its tabs keep them when it is started again to
+    /// restore a workspace and reports its tabs only later.
+    kinds: HashMap<String, (Option<ContentsKind>, bool)>,
+    assistant: Assistant,
+    chat: Chat,
+    routing: Routing,
+    settings: Settings,
+    flows: flows::Flows,
+    /// The model list has been asked for.
+    listed: bool,
+    /// Paths that frame tests give in place of file dialogs.
+    #[cfg(test)]
+    scripted_paths: std::collections::VecDeque<PathBuf>,
 }
 
 impl HostWindow {
@@ -81,6 +123,8 @@ impl HostWindow {
         let tablet = unsafe { Tablet::connect(creation) };
         let mut window = Self::with_apps(&creation.egui_ctx, apps, tablet);
         window.native_dialogs = true;
+        window.settings = Settings::load(Settings::default_file());
+        window.chat.model = window.settings.model.clone();
         window
     }
 
@@ -96,6 +140,17 @@ impl HostWindow {
             app.running.attach(ctx);
         }
         let count = apps.len();
+        let launch = apps
+            .iter()
+            .map(|started| AppSpec {
+                id: started.id.clone(),
+                name: started.name.clone(),
+                executable: started.executable.clone(),
+            })
+            .collect();
+        let wake_ctx = ctx.clone();
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || wake_ctx.request_repaint());
+        let assistant = Assistant::spawn(assistant::Config::from_env(wake));
         Self {
             apps,
             selected: 0,
@@ -106,11 +161,26 @@ impl HostWindow {
             viewport: [0.0, 0.0],
             viewport_sent: vec![false; count],
             native_dialogs: false,
-            quitting: false,
             copy_press: false,
             cut_press: false,
             paste_press: false,
+            ctx: ctx.clone(),
+            launch,
+            kinds: HashMap::new(),
+            assistant,
+            chat: Chat::default(),
+            routing: Routing::default(),
+            settings: Settings::load(None),
+            flows: flows::Flows::default(),
+            listed: false,
+            #[cfg(test)]
+            scripted_paths: std::collections::VecDeque::new(),
         }
+    }
+
+    /// A request is running: every sub-application control waits.
+    fn locked(&self) -> bool {
+        self.chat.working
     }
 
     /// The selected sub-application's shown tab id.
@@ -121,13 +191,30 @@ impl HostWindow {
     /// The contents a tab shows. A tab a sub-application reported after its
     /// greeting shows what the greeting declared for its first tab.
     fn contents(&self, app: usize, tab: &str) -> Option<ContentsKind> {
-        let declaration = self.apps.get(app)?.running.declaration();
+        let started = self.apps.get(app)?;
+        let declaration = started.running.declaration();
         declaration
             .contents
             .iter()
             .find(|contents| contents.tab == tab)
             .or_else(|| declaration.contents.first())
             .map(|contents| contents.kind)
+            .or_else(|| self.kinds.get(&started.id).and_then(|kind| kind.0))
+    }
+
+    /// Remembers what each sub-application declared for its first tab.
+    fn note_kinds(&mut self) {
+        for started in &self.apps {
+            let declaration = started.running.declaration();
+            if let Some(contents) = declaration.contents.first() {
+                let panel = declaration
+                    .panels
+                    .first()
+                    .is_some_and(|panel| matches!(panel.side, PanelSide::Right));
+                self.kinds
+                    .insert(started.id.clone(), (Some(contents.kind), panel));
+            }
+        }
     }
 
     /// The properties panel is the host's, drawn only for a tab whose
@@ -137,6 +224,9 @@ impl HostWindow {
             return false;
         };
         let declaration = started.running.declaration();
+        if declaration.panels.is_empty() && declaration.contents.is_empty() {
+            return self.kinds.get(&started.id).is_some_and(|kind| kind.1);
+        }
         declaration
             .panels
             .iter()
@@ -145,7 +235,13 @@ impl HostWindow {
             .is_some_and(|panel| matches!(panel.side, PanelSide::Right))
     }
 
+    /// Writes one message to a sub-application. While the assistant works,
+    /// nothing from the toolbar, menus, panel, drawing surface, or shortcuts
+    /// is sent; selecting a tab and moving its camera still are.
     fn send(&mut self, app: usize, message: HostMessage) {
+        if self.locked() && waits_while_locked(&message) {
+            return;
+        }
         if let Some(started) = self.apps.get_mut(app) {
             started.running.send(&message);
         }
@@ -222,33 +318,7 @@ impl HostWindow {
                 zoom: camera.zoom,
             },
         );
-    }
-
-    /// The window's close: each sub-application resolves its unsaved work
-    /// first. The window closes once every one is ready or has exited. A
-    /// cancelled question leaves the window open; pressing close again asks again.
-    fn note_window_close(&mut self, ctx: &egui::Context) {
-        let requested = ctx.input(|input| input.viewport().close_requested());
-        if requested {
-            self.quitting = true;
-            for started in &mut self.apps {
-                if !started.running.declared.quit_ready {
-                    started.running.send(&HostMessage::Quit);
-                }
-            }
-        }
-        if !self.quitting {
-            return;
-        }
-        let ready = self
-            .apps
-            .iter()
-            .all(|started| started.running.exited() || started.running.declared.quit_ready);
-        if ready {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        } else if requested {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-        }
+        self.flows.moved = true;
     }
 
     /// Opens the file dialogs sub-applications asked for, and answers them.
@@ -270,6 +340,7 @@ impl HostWindow {
                         request.filter.as_ref(),
                     ),
                 };
+                self.flows.dialog_closed = Some(std::time::Instant::now());
                 self.send(
                     app,
                     HostMessage::FileResult {
@@ -281,8 +352,12 @@ impl HostWindow {
         }
     }
 
-    /// The one question shown: the selected sub-application's first.
-    fn show_asks(&mut self, ctx: &egui::Context) {
+    /// The one question shown: the host's own about the workspace, or else
+    /// the selected sub-application's first.
+    fn show_asks(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.show_question(ctx, frame) {
+            return;
+        }
         let order: Vec<usize> = std::iter::once(self.selected)
             .chain((0..self.apps.len()).filter(|app| *app != self.selected))
             .filter(|app| *app < self.apps.len())
@@ -293,6 +368,7 @@ impl HostWindow {
             };
             if let Some(button) = ask::show(ctx, app, &question) {
                 self.apps[app].running.declared.ask = None;
+                self.note_answer(&question, &button);
                 self.send(
                     app,
                     HostMessage::Answer {
@@ -378,6 +454,10 @@ impl HostWindow {
         if self.surface.transforming() {
             actions.clear();
         }
+        // While the assistant works, only the camera's own shortcuts run.
+        if self.locked() {
+            actions.retain(|action| Doc::moves_camera_only(&action.id));
+        }
         actions
     }
 }
@@ -410,7 +490,9 @@ impl eframe::App for HostWindow {
         }
         // Pings go out every second, and a missing answer shows a notice.
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
-        self.note_window_close(&ctx);
+        self.note_kinds();
+        self.pump_assistant();
+        self.workspace_frame(&ctx, frame);
         self.resolve_dialogs(frame);
 
         let app = self.selected.min(self.apps.len().saturating_sub(1));
@@ -431,149 +513,19 @@ impl eframe::App for HostWindow {
 
         let mut chosen: Vec<Action> = Vec::new();
         let mut sent: Vec<Sent> = Vec::new();
+        let mut talk: Vec<ChatEvent> = Vec::new();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                let strip = self.strip();
-                let (menu, plus_tip) = match self.apps.get(app) {
-                    Some(started) => (
-                        started.running.declared.menu.clone(),
-                        started
-                            .running
-                            .declared
-                            .tabs
-                            .as_ref()
-                            .filter(|tabs| tabs.new_tab.is_some())
-                            .map(|tabs| tabs.new_tab_tip.clone()),
-                    ),
-                    None => (Vec::new(), None),
-                };
-                for event in tabs::show(ui, &strip, &menu, plus_tip.as_deref()) {
-                    match event {
-                        TabEvent::Menu(action) => chosen.push(action),
-                        TabEvent::Select { app, tab } => {
-                            self.selected = app;
-                            self.send(
-                                app,
-                                HostMessage::Command {
-                                    id: "select_tab".to_string(),
-                                    tab: Some(tab),
-                                    arg: None,
-                                    node: None,
-                                    viewport: self.viewport,
-                                },
-                            );
-                        }
-                        TabEvent::Close { app, tab } => self.send(
-                            app,
-                            HostMessage::Command {
-                                id: "close_tab".to_string(),
-                                tab: Some(tab),
-                                arg: None,
-                                node: None,
-                                viewport: self.viewport,
-                            },
-                        ),
-                        TabEvent::Plus => {
-                            if let Some(action) = self.apps.get(app).and_then(|started| {
-                                started.running.declared.tabs.as_ref()?.new_tab.clone()
-                            }) {
-                                chosen.push(action);
-                            }
-                        }
-                    }
-                }
-                let toolbar = self
-                    .apps
-                    .get(app)
-                    .and_then(|started| started.running.declared.toolbar.clone());
-                chosen.extend(toolbar::show(ui, toolbar.as_ref()));
-
-                let full = ui.available_rect_before_wrap();
-                let Some(tab) = tab.clone() else {
-                    ui.painter().rect_filled(full, 0.0, CANVAS);
-                    return;
-                };
-                let properties = self
-                    .apps
-                    .get(app)
-                    .and_then(|started| started.running.declared.properties.clone());
-                // A tab without a declared panel has no panel tab, and F4
-                // does nothing there.
-                let has_panel = self.has_panel(app, &tab);
-                let editing_text = self.editing_text(app, &tab);
-                // F4 can open the panel. Split after the keys so that frame
-                // gives the panel its width and narrows the contents.
-                chosen.extend(self.handle_keys(&ctx, editing_text));
-                if properties.is_none() {
-                    if !has_panel {
-                        self.panel_open = false;
-                    }
-                    if has_panel && ui.input(icons::panel_shortcut_pressed) {
-                        self.panel_open = !self.panel_open;
-                    }
-                }
-                let open = has_panel
-                    && properties
-                        .as_ref()
-                        .map_or(self.panel_open, |properties| properties.open);
-                let panel_w = if open { panel::WIDTH } else { 0.0 };
-                let right = if panel_w == 0.0 {
-                    full.right()
-                } else {
-                    (full.right() - panel_w).max(full.left())
-                };
-                let rect = Rect::from_min_max(full.min, egui::pos2(right, full.bottom()));
-                self.viewport = [f64::from(rect.width()), f64::from(rect.height())];
-                if self.viewport[0] > 1.0
-                    && self.viewport[1] > 1.0
-                    && !self.viewport_sent.get(app).copied().unwrap_or(true)
-                {
-                    self.viewport_sent[app] = true;
-                    let viewport = self.viewport;
-                    self.send(app, HostMessage::Viewport { viewport });
-                }
-
-                match self.contents(app, &tab) {
-                    Some(ContentsKind::Canvas) => self.show_canvas(ui, app, &tab, rect, dismissing),
-                    Some(ContentsKind::Grid) => {
-                        let painter = ui.painter().with_clip_rect(rect);
-                        painter.rect_filled(rect, 0.0, CANVAS);
-                        // As `Camera::centered` sets a new sketch: origin in
-                        // the middle of the area, zoom 1.
-                        let origin = [-self.viewport[0] / 2.0, -self.viewport[1] / 2.0];
-                        grid::paint_grid(&painter, rect, origin, 1.0);
-                    }
-                    None => {
-                        ui.painter()
-                            .with_clip_rect(rect)
-                            .rect_filled(rect, 0.0, CANVAS);
-                    }
-                }
-                self.paint_status(ui, app, rect);
-
-                // A menu's Properties can open the panel after this frame was
-                // split with no room for it. It then waits for the next frame,
-                // which gives it its width.
-                if open && panel_w > 0.0 {
-                    let panel_rect =
-                        Rect::from_min_max(egui::pos2(rect.right(), full.top()), full.max);
-                    sent.extend(panel::show(ui, properties.as_ref(), panel_rect));
-                } else if open {
-                    ui.ctx().request_repaint();
-                }
-                if has_panel {
-                    let tip = properties
-                        .as_ref()
-                        .map_or_else(icons::panel_tip, |properties| properties.tip.clone());
-                    if panel::toggle_tab(ui.ctx(), open, &tip, rect.right(), full.top()) {
-                        match &properties {
-                            Some(properties) => chosen.push(properties.toggle.clone()),
-                            None => self.panel_open = !self.panel_open,
-                        }
-                    }
-                }
+                let full = ui.max_rect();
+                let left = chat::width(full.width());
+                let chat_rect =
+                    Rect::from_min_max(full.min, egui::pos2(full.left() + left, full.bottom()));
+                let shell = Rect::from_min_max(egui::pos2(chat_rect.right(), full.top()), full.max);
+                talk = chat::show(ui, chat_rect, &mut self.chat, &self.settings.recent);
+                ui.scope_builder(egui::UiBuilder::new().max_rect(shell), |ui| {
+                    self.shell(ui, &ctx, app, tab, dismissing, &mut chosen, &mut sent);
+                });
             });
 
         for action in chosen {
@@ -600,11 +552,377 @@ impl eframe::App for HostWindow {
             }
         }
         self.send_camera();
-        self.show_asks(&ctx);
+        for event in talk {
+            self.chat_event(event, &ctx, frame);
+        }
+        self.show_asks(&ctx, frame);
     }
 }
 
+/// While the assistant works, these wait: commands, gestures, selections,
+/// and property edits. Selecting a tab is a command that still goes.
+fn waits_while_locked(message: &HostMessage) -> bool {
+    match message {
+        HostMessage::Command { id, .. } => id != "select_tab",
+        HostMessage::Gesture { .. } | HostMessage::Select { .. } | HostMessage::Property { .. } => {
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Menu rows drawn in their waiting look, with their submenus.
+fn waiting_rows(rows: &[MenuEntry]) -> Vec<MenuEntry> {
+    rows.iter()
+        .cloned()
+        .map(|mut row| {
+            row.enabled = false;
+            row.submenu = waiting_rows(&row.submenu);
+            row
+        })
+        .collect()
+}
+
 impl HostWindow {
+    /// The shell to the right of the chat panel: the tab strip, toolbar,
+    /// contents, and properties panel, as version 0.2 drew them. While the
+    /// assistant works, every sub-application control is in its waiting look.
+    #[allow(clippy::too_many_arguments)]
+    fn shell(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        app: usize,
+        tab: Option<String>,
+        dismissing: bool,
+        chosen: &mut Vec<Action>,
+        sent: &mut Vec<Sent>,
+    ) {
+        let locked = self.locked();
+        self.surface.locked = locked;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let mut strip = self.strip();
+        if locked {
+            for tab in &mut strip {
+                tab.close_waits = true;
+            }
+        }
+        let (menu, plus_tip) = match self.apps.get(app) {
+            Some(started) => (
+                started.running.declared.menu.clone(),
+                started
+                    .running
+                    .declared
+                    .tabs
+                    .as_ref()
+                    .filter(|tabs| tabs.new_tab.is_some())
+                    .map(|tabs| tabs.new_tab_tip.clone()),
+            ),
+            None => (Vec::new(), None),
+        };
+        let menu = if locked { waiting_rows(&menu) } else { menu };
+        for event in tabs::show(ui, &strip, &menu, plus_tip.as_deref(), locked) {
+            match event {
+                TabEvent::Menu(action) => chosen.push(action),
+                TabEvent::Select { app, tab } => {
+                    self.selected = app;
+                    self.send(
+                        app,
+                        HostMessage::Command {
+                            id: "select_tab".to_string(),
+                            tab: Some(tab),
+                            arg: None,
+                            node: None,
+                            viewport: self.viewport,
+                        },
+                    );
+                }
+                TabEvent::Close { app, tab } => self.send(
+                    app,
+                    HostMessage::Command {
+                        id: "close_tab".to_string(),
+                        tab: Some(tab),
+                        arg: None,
+                        node: None,
+                        viewport: self.viewport,
+                    },
+                ),
+                TabEvent::Plus => {
+                    if let Some(action) = self.apps.get(app).and_then(|started| {
+                        started.running.declared.tabs.as_ref()?.new_tab.clone()
+                    }) {
+                        chosen.push(action);
+                    }
+                }
+            }
+        }
+        let toolbar = self
+            .apps
+            .get(app)
+            .and_then(|started| started.running.declared.toolbar.clone());
+        let picked = ui
+            .scope(|ui| {
+                if locked {
+                    ui.style_mut().visuals.disabled_alpha = LOCKED_ALPHA;
+                    ui.disable();
+                }
+                toolbar::show(ui, toolbar.as_ref())
+            })
+            .inner;
+        if !locked {
+            chosen.extend(picked);
+        }
+
+        let full = ui.available_rect_before_wrap();
+        let Some(tab) = tab else {
+            ui.painter().rect_filled(full, 0.0, CANVAS);
+            return;
+        };
+        let properties = self
+            .apps
+            .get(app)
+            .and_then(|started| started.running.declared.properties.clone());
+        // A tab without a declared panel has no panel tab, and F4
+        // does nothing there.
+        let has_panel = self.has_panel(app, &tab);
+        let editing_text = self.editing_text(app, &tab);
+        // F4 can open the panel. Split after the keys so that frame
+        // gives the panel its width and narrows the contents.
+        chosen.extend(self.handle_keys(ctx, editing_text));
+        if properties.is_none() {
+            if !has_panel {
+                self.panel_open = false;
+            }
+            if has_panel && ui.input(icons::panel_shortcut_pressed) {
+                self.panel_open = !self.panel_open;
+            }
+        }
+        let open = has_panel
+            && properties
+                .as_ref()
+                .map_or(self.panel_open, |properties| properties.open);
+        let panel_w = if open { panel::WIDTH } else { 0.0 };
+        let right = if panel_w == 0.0 {
+            full.right()
+        } else {
+            (full.right() - panel_w).max(full.left())
+        };
+        let rect = Rect::from_min_max(full.min, egui::pos2(right, full.bottom()));
+        self.viewport = [f64::from(rect.width()), f64::from(rect.height())];
+        if self.viewport[0] > 1.0
+            && self.viewport[1] > 1.0
+            && !self.viewport_sent.get(app).copied().unwrap_or(true)
+        {
+            self.viewport_sent[app] = true;
+            let viewport = self.viewport;
+            self.send(app, HostMessage::Viewport { viewport });
+        }
+
+        match self.contents(app, &tab) {
+            Some(ContentsKind::Canvas) => self.show_canvas(ui, app, &tab, rect, dismissing),
+            Some(ContentsKind::Grid) => {
+                let painter = ui.painter().with_clip_rect(rect);
+                painter.rect_filled(rect, 0.0, CANVAS);
+                // As `Camera::centered` sets a new sketch: origin in
+                // the middle of the area, zoom 1.
+                let origin = [-self.viewport[0] / 2.0, -self.viewport[1] / 2.0];
+                grid::paint_grid(&painter, rect, origin, 1.0);
+            }
+            None => {
+                ui.painter()
+                    .with_clip_rect(rect)
+                    .rect_filled(rect, 0.0, CANVAS);
+            }
+        }
+        self.paint_status(ui, app, rect);
+
+        // A menu's Properties can open the panel after this frame was
+        // split with no room for it. It then waits for the next frame,
+        // which gives it its width.
+        if open && panel_w > 0.0 {
+            let panel_rect = Rect::from_min_max(egui::pos2(rect.right(), full.top()), full.max);
+            let mut column = ui.new_child(egui::UiBuilder::new().max_rect(panel_rect));
+            if locked {
+                column.style_mut().visuals.disabled_alpha = LOCKED_ALPHA;
+                column.disable();
+            }
+            let edits = panel::show(&mut column, properties.as_ref(), panel_rect);
+            if !locked {
+                sent.extend(edits);
+            }
+        } else if open {
+            ui.ctx().request_repaint();
+        }
+        if has_panel {
+            let tip = properties
+                .as_ref()
+                .map_or_else(icons::panel_tip, |properties| properties.tip.clone());
+            if panel::toggle_tab(ui.ctx(), open, &tip, rect.right(), full.top()) {
+                match &properties {
+                    Some(properties) if !locked => chosen.push(properties.toggle.clone()),
+                    Some(_) => {}
+                    None => self.panel_open = !self.panel_open,
+                }
+            }
+        }
+    }
+
+    /// Takes what the assistant sent: entries to show, tool calls to route,
+    /// the start and end of a request, and the model list. Then passes back
+    /// the sub-applications' answers, and tells the assistant when the
+    /// running sub-applications' tabs or skills changed.
+    fn pump_assistant(&mut self) {
+        if !self.listed && self.native_dialogs {
+            self.listed = true;
+            self.assistant.send(Command::ListModels);
+        }
+        while let Some(event) = self.assistant.try_recv() {
+            match event {
+                assistant::Event::Entry(entry) => self.chat.conversation.push(entry),
+                assistant::Event::Cleared => self.chat.conversation.clear(),
+                assistant::Event::Working(working) => {
+                    self.chat.working = working;
+                    if !working {
+                        self.routing.end();
+                    }
+                }
+                assistant::Event::Models(models) => {
+                    // The picker offers its short list, each model able to see
+                    // the pictures the assistant looks at.
+                    let models = models.map(crate::workspace::picker_models);
+                    // A remembered model the list no longer offers, such as a
+                    // batch variant, gives way to the default.
+                    let offered = |chosen: &ModelChoice, list: &[assistant::Model]| {
+                        list.iter().any(|model| model.id == chosen.id)
+                    };
+                    if let Ok(list) = &models
+                        && self.chat.model.as_ref().is_none_or(|chosen| !offered(chosen, list))
+                        && let Some(model) = crate::workspace::default_model(list)
+                    {
+                        self.chat.model = Some(ModelChoice {
+                            id: model.id.clone(),
+                            name: model.name.clone(),
+                        });
+                    }
+                    self.chat.models = Some(models);
+                }
+                assistant::Event::Call {
+                    call,
+                    app,
+                    tab,
+                    tool,
+                    input,
+                    group,
+                } => {
+                    let message = HostMessage::Invoke {
+                        call: call.clone(),
+                        tab,
+                        tool,
+                        input,
+                        group,
+                    };
+                    if let Some(answer) = self.routing.call(&mut self.apps, call, &app, message) {
+                        self.assistant.send(answer);
+                    }
+                }
+            }
+        }
+        for answer in self.routing.poll(&mut self.apps) {
+            self.assistant.send(answer);
+        }
+        if let Some(targets) = self.routing.changed_targets(&self.apps) {
+            self.assistant.send(Command::Targets(targets));
+        }
+    }
+
+    /// What the person did in the chat panel.
+    fn chat_event(&mut self, event: ChatEvent, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        match event {
+            ChatEvent::Send => {
+                if self.chat.working {
+                    return;
+                }
+                let text = std::mem::take(&mut self.chat.input).trim().to_string();
+                let mut unread = Vec::new();
+                let attachments = std::mem::take(&mut self.chat.chips)
+                    .iter()
+                    .filter_map(|path| {
+                        let loaded = chat::load_attachment(path);
+                        if loaded.is_none() {
+                            unread.push(path.display().to_string());
+                        }
+                        loaded
+                    })
+                    .collect();
+                let selected = self.apps.get(self.selected).and_then(|started| {
+                    Some((started.id.clone(), started.running.tabs().1?))
+                });
+                let request = assistant::Request {
+                    text,
+                    attachments,
+                    model: self
+                        .chat
+                        .model
+                        .as_ref()
+                        .map(|model| model.id.clone())
+                        .unwrap_or_default(),
+                    selected,
+                    targets: route::targets(&self.apps),
+                };
+                self.assistant.send(Command::Send(request));
+                for path in unread {
+                    self.assistant
+                        .send(Command::Note(format!("{path} could not be read, so it was not sent.")));
+                }
+            }
+            ChatEvent::Stop => self.assistant.send(Command::Stop),
+            ChatEvent::Attach => {
+                let filter = protocol::FileFilter {
+                    name: "Pictures and text files".to_string(),
+                    extensions: chat::PICTURES
+                        .iter()
+                        .chain(chat::TEXTS)
+                        .map(|ext| ext.to_string())
+                        .collect(),
+                };
+                let picked = if self.native_dialogs {
+                    crate::dialogs::pick_files(frame, &filter)
+                } else {
+                    self.scripted_path().into_iter().collect()
+                };
+                for path in picked {
+                    if !self.chat.chips.contains(&path) {
+                        self.chat.chips.push(path);
+                    }
+                }
+            }
+            ChatEvent::ListModels => {
+                self.chat.models = None;
+                self.assistant.send(Command::ListModels);
+            }
+            ChatEvent::Model(model) => {
+                let choice = ModelChoice {
+                    id: model.id,
+                    name: model.name,
+                };
+                self.chat.model = Some(choice.clone());
+                self.settings.choose_model(choice);
+            }
+            ChatEvent::Logo(choice) => self.logo(choice, ctx, frame),
+        }
+    }
+
+    /// The path a frame test gives in place of a file dialog.
+    fn scripted_path(&mut self) -> Option<PathBuf> {
+        #[cfg(test)]
+        {
+            self.scripted_paths.pop_front()
+        }
+        #[cfg(not(test))]
+        {
+            None
+        }
+    }
     /// Every running sub-application's tabs, in the order their programs
     /// started, then in the order each reports them.
     fn strip(&self) -> Vec<StripTab> {
@@ -664,9 +982,11 @@ impl HostWindow {
                 live: &mut self.live,
                 viewport,
             };
-            self.surface.commit_text_on_outside_press(ui, &mut doc);
-            if escape && !ui.ctx().text_edit_focused() || escape && doc.text_editing() {
-                self.surface.escape(&mut doc);
+            if !self.surface.locked {
+                self.surface.commit_text_on_outside_press(ui, &mut doc);
+                if escape && !ui.ctx().text_edit_focused() || escape && doc.text_editing() {
+                    self.surface.escape(&mut doc);
+                }
             }
             self.surface.show(ui, &mut doc, rect, dismissing);
         }
@@ -807,10 +1127,17 @@ mod tests {
 
     impl Harness {
         fn new() -> Self {
+            Self::with(template())
+        }
+
+        /// A window running one sub-application that declared `messages`.
+        fn with(messages: Vec<protocol::AppMessage>) -> Self {
             let ctx = egui::Context::default();
             let started = Started {
+                id: "fixture".to_string(),
                 name: "Template".to_string(),
-                running: Running::declared(template()),
+                executable: None,
+                running: Running::declared(messages),
             };
             let app = HostWindow::with_apps(&ctx, vec![started], Tablet::none());
             let mut harness = Self {
@@ -842,6 +1169,42 @@ mod tests {
             for viewport in output.viewport_output.into_values() {
                 window_commands.extend(viewport.commands);
             }
+        }
+
+        /// The window's close is pressed.
+        fn close(&mut self) {
+            let mut input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, SCREEN)),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .events
+                .push(egui::ViewportEvent::Close);
+            let Self { ctx, app, frame, .. } = self;
+            let mut output = ctx.run_ui(input, |ui| app.ui(ui, frame));
+            output.textures_delta.clear();
+        }
+
+        /// A row of the logo menu.
+        fn choose(&mut self, choice: crate::chat::LogoChoice) {
+            let Self { ctx, app, frame, .. } = self;
+            app.logo(choice, &ctx.clone(), frame);
+            self.step(Vec::new());
+        }
+
+        /// Frames until `done`, waiting for the assistant's thread.
+        fn until(&mut self, done: impl Fn(&HostWindow) -> bool) {
+            for _ in 0..200 {
+                if done(&self.app) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                self.step(Vec::new());
+            }
+            panic!("the window never got there");
         }
 
         /// Moves to `from`, presses, drags to `to`, and releases, a frame each.
@@ -942,7 +1305,9 @@ mod tests {
         let mut harness = Harness::new();
         let wide = harness.app.viewport[0];
         assert!(!harness.app.panel_open);
-        assert!(wide > 1000.0, "canvas width {wide}");
+        // The chat panel takes a quarter of the window on the left.
+        let shell = f64::from(SCREEN.x - crate::chat::width(SCREEN.x));
+        assert!((wide - shell).abs() < 1.0, "canvas width {wide}");
 
         harness.step(vec![key_press(Key::F4)]);
         assert!(harness.app.panel_open);
@@ -955,5 +1320,260 @@ mod tests {
         harness.step(vec![key_press(Key::F4)]);
         assert!(!harness.app.panel_open);
         assert!((harness.app.viewport[0] - wide).abs() < 1.0);
+    }
+
+    fn entry(role: assistant::Role, text: &str) -> assistant::Entry {
+        assistant::Entry {
+            role,
+            text: text.to_string(),
+            time: 1_760_000_000,
+            attachments: Vec::new(),
+            tool: None,
+            ok: None,
+        }
+    }
+
+    /// A sub-application showing one document from a file, with a camera.
+    fn with_a_document() -> Vec<protocol::AppMessage> {
+        use protocol::{AppMessage, ContentsKind, DocumentCamera, TabEntry, Tabs};
+        vec![
+            AppMessage::Hello {
+                protocol: protocol::PROTOCOL_VERSION,
+            },
+            AppMessage::Tab {
+                id: "7".into(),
+                label: "notes".into(),
+            },
+            AppMessage::Contents {
+                tab: "7".into(),
+                kind: ContentsKind::Canvas,
+            },
+            AppMessage::End,
+            AppMessage::Tabs(Tabs {
+                tabs: vec![TabEntry {
+                    id: "7".into(),
+                    label: "notes".into(),
+                    dirty: false,
+                    close_waits: false,
+                    path: Some("/somewhere/notes.file".into()),
+                    saves: true,
+                }],
+                active: "7".into(),
+                new_tab: None,
+                new_tab_tip: String::new(),
+            }),
+            AppMessage::Document {
+                tab: "7".into(),
+                sketch: serde_json::json!({
+                    "format_version": 1,
+                    "id": 41,
+                    "name": "Private Words Of The Work",
+                    "camera": {"origin": [0.0, 0.0], "zoom": 1.0},
+                    "nodes": [],
+                }),
+                selection: Vec::new(),
+                active_canvas: None,
+                camera: Some(DocumentCamera {
+                    origin: [-30.0, 12.5],
+                    zoom: 2.0,
+                }),
+            },
+        ]
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let folder = std::env::temp_dir().join(format!("inpainter-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        folder
+    }
+
+    /// Catches a workspace that keeps its own copy of the work: the file
+    /// holds the tab's path, label, and camera, and none of the document.
+    #[test]
+    fn a_saved_workspace_holds_paths_not_work() {
+        let mut harness = Harness::with(with_a_document());
+        let mut tool = entry(assistant::Role::Tool, "");
+        tool.tool = Some("fixture__edit__grow".into());
+        tool.ok = Some(true);
+        harness.app.chat.conversation = vec![
+            entry(assistant::Role::Person, "make it larger"),
+            tool,
+            entry(assistant::Role::Assistant, "Done."),
+        ];
+        let folder = scratch("save");
+        harness.app.scripted_paths.push_back(folder.join("mine"));
+        harness.choose(crate::chat::LogoChoice::SaveAs);
+        harness.step(Vec::new());
+
+        let path = folder.join("mine.inpainter");
+        let text = std::fs::read_to_string(&path).expect("the workspace was written");
+        let file = crate::workspace::WorkspaceFile::parse(&text).unwrap();
+        assert_eq!(file.tabs.len(), 1);
+        assert_eq!(file.tabs[0].app, "fixture");
+        assert_eq!(file.tabs[0].path.as_deref(), Some("/somewhere/notes.file"));
+        let camera = file.tabs[0].camera.expect("the camera is kept");
+        assert_eq!((camera.origin, camera.zoom), ([-30.0, 12.5], 2.0));
+        assert_eq!(file.selected, Some(0));
+        assert_eq!(file.conversation, harness.app.chat.conversation);
+        for word in ["Private Words", "nodes", "format_version", "\"41\"", "selection"] {
+            assert!(!text.contains(word), "the workspace holds {word:?}:\n{text}");
+        }
+        assert_eq!(harness.app.flows.path.as_deref(), Some(path.as_path()));
+        assert!(!harness.app.workspace_dirty(), "a saved workspace has no changes");
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    /// Catches a fresh workspace that asks before closing, and a changed one
+    /// that does not.
+    #[test]
+    fn only_a_changed_workspace_asks_before_closing() {
+        let mut fresh = Harness::new();
+        fresh.step(Vec::new());
+        fresh.close();
+        assert!(fresh.app.flows.question_shown().is_none());
+        assert!(fresh.app.flows.closing_started(), "the quit flow did not start");
+
+        let mut changed = Harness::new();
+        changed.step(Vec::new());
+        changed
+            .app
+            .chat
+            .conversation
+            .push(entry(assistant::Role::Person, "hello"));
+        changed.close();
+        assert_eq!(
+            changed.app.flows.question_shown().as_deref(),
+            Some("Save this workspace?")
+        );
+        assert!(!changed.app.flows.closing_started());
+    }
+
+    /// Catches a reopened workspace that loses its conversation, or that
+    /// silently drops a tab whose sub-application is not installed.
+    #[test]
+    fn opening_a_workspace_restores_the_conversation_and_says_what_was_left_out() {
+        let folder = scratch("open");
+        let path = folder.join("old.inpainter");
+        let file = crate::workspace::WorkspaceFile {
+            version: crate::workspace::VERSION,
+            tabs: vec![crate::workspace::WorkspaceTab {
+                app: "no-such-app".into(),
+                path: None,
+                label: "Gone".into(),
+                camera: None,
+            }],
+            selected: Some(0),
+            conversation: vec![entry(assistant::Role::Person, "hello")],
+        };
+        file.write(&path).unwrap();
+
+        let mut harness = Harness::new();
+        harness.step(Vec::new());
+        harness.choose(crate::chat::LogoChoice::Recent(path.clone()));
+        assert!(harness.app.flows.closing_started());
+        // The sub-application has resolved its unsaved work.
+        harness.app.apps[0].running.declared.quit_ready = true;
+        harness.until(|app| app.chat.conversation.len() == 2);
+        assert_eq!(harness.app.chat.conversation[0].text, "hello");
+        let left_out = &harness.app.chat.conversation[1];
+        assert_eq!(left_out.role, assistant::Role::Note);
+        assert!(left_out.text.contains("Gone"), "{}", left_out.text);
+        assert_eq!(harness.app.flows.path.as_deref(), Some(path.as_path()));
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    /// Catches a lock that lets the work be changed by hand during a
+    /// request, or one that stops tabs from being switched or watched.
+    #[test]
+    fn the_lock_holds_changes_and_lets_tabs_and_cameras_through() {
+        use protocol::{HostMessage, SelectOp};
+        let command = |id: &str| HostMessage::Command {
+            id: id.into(),
+            tab: Some("7".into()),
+            arg: None,
+            node: None,
+            viewport: [1.0, 1.0],
+        };
+        assert!(!super::waits_while_locked(&command("select_tab")));
+        assert!(super::waits_while_locked(&command("close_tab")));
+        assert!(super::waits_while_locked(&command("undo")));
+        assert!(super::waits_while_locked(&HostMessage::Gesture {
+            tab: "7".into(),
+            gesture: serde_json::json!({}),
+        }));
+        assert!(super::waits_while_locked(&HostMessage::Select {
+            tab: "7".into(),
+            op: SelectOp::Clear,
+        }));
+        assert!(super::waits_while_locked(&HostMessage::Property {
+            prop: serde_json::json!("size"),
+            value: serde_json::json!(3),
+            preview: false,
+        }));
+        assert!(!super::waits_while_locked(&HostMessage::Camera {
+            tab: "7".into(),
+            origin: [0.0, 0.0],
+            zoom: 1.0,
+        }));
+        assert!(!super::waits_while_locked(&HostMessage::Invoke {
+            call: "c".into(),
+            tab: "7".into(),
+            tool: "a__b__c".into(),
+            input: serde_json::json!({}),
+            group: "g".into(),
+        }));
+    }
+
+    /// Catches a call routed to the wrong process, a late answer passed on,
+    /// or a call to an exited process left waiting forever.
+    #[test]
+    fn tool_calls_reach_their_process_and_fail_when_it_is_gone() {
+        use assistant::Command;
+        let mut apps = vec![
+            Started {
+                id: "gone".into(),
+                name: "Gone".into(),
+                executable: None,
+                running: Running::not_started(),
+            },
+            Started {
+                id: "here".into(),
+                name: "Here".into(),
+                executable: None,
+                running: Running::declared(template()),
+            },
+        ];
+        let invoke = |call: &str| protocol::HostMessage::Invoke {
+            call: call.into(),
+            tab: "template".into(),
+            tool: "here__s__t".into(),
+            input: serde_json::json!({}),
+            group: "g".into(),
+        };
+        let mut routing = crate::route::Routing::default();
+        let Some(Command::Result(result)) = routing.call(&mut apps, "c1".into(), "gone", invoke("c1"))
+        else {
+            panic!("an exited process's call was not answered");
+        };
+        assert!(!result.ok);
+        assert_eq!(result.call, "c1");
+
+        assert!(routing.call(&mut apps, "c2".into(), "here", invoke("c2")).is_none());
+        let answer = |call: &str| protocol::ToolResult {
+            call: call.into(),
+            ok: true,
+            output: serde_json::json!({"made": 3}),
+            images: Vec::new(),
+        };
+        apps[1].running.declared.results.push_back(answer("late"));
+        apps[1].running.declared.results.push_back(answer("c2"));
+        let out = routing.poll(&mut apps);
+        assert_eq!(out, vec![Command::Result(answer("c2"))]);
+        assert!(routing.poll(&mut apps).is_empty());
+
+        let targets = crate::route::targets(&apps);
+        assert_eq!(targets.len(), 1, "an exited process is not offered");
+        assert_eq!(targets[0].app, "here");
+        assert_eq!(targets[0].tabs[0].label, "Template");
     }
 }

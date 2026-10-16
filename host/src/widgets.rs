@@ -684,3 +684,35 @@ pub(crate) fn drag_scroll_cursor(ui: &egui::Ui, scroll: egui::Id) {
 pub(crate) fn quiet(enabled: bool) -> Color32 {
     if enabled { TEXT } else { DISABLED }
 }
+
+/// A filled rounded rectangle with a 1-point edge inside it.
+pub(crate) fn outlined(painter: &Painter, rect: Rect, radius: f32, fill: Color32, edge: Color32) {
+    painter.rect(
+        rect,
+        radius,
+        fill,
+        Stroke::new(1.0, edge),
+        StrokeKind::Inside,
+    );
+}
+
+/// A filled disc.
+pub(crate) fn disc(painter: &Painter, center: Pos2, radius: f32, color: Color32) {
+    painter.circle_filled(center, radius, color);
+}
+
+/// A soft shadow under a raised rounded box, as under the menus.
+pub(crate) fn soft_shadow(painter: &Painter, rect: Rect, radius: f32) {
+    let shadow = egui::epaint::Shadow {
+        offset: [0, 2],
+        blur: 14,
+        spread: 0,
+        color: Color32::from_black_alpha(22),
+    };
+    painter.add(shadow.as_shape(rect, radius));
+}
+
+/// A thin vertical rule from `top` to `bottom` at `x`.
+pub(crate) fn vertical_rule(painter: &Painter, x: f32, top: f32, bottom: f32, color: Color32) {
+    painter.vline(x, top..=bottom, Stroke::new(1.0, color));
+}

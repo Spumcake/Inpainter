@@ -19,9 +19,9 @@ Check that `apps/<id>` does not exist yet.
 ## Steps
 
 1. Copy the folder `apps/template` to `apps/<id>`, with every file in it.
-2. In `apps/<id>/Cargo.toml`, set the package `name` to the id. Leave the dependencies as they are: `protocol` only.
+2. In `apps/<id>/Cargo.toml`, set the package `name` to the id. Leave the dependencies as they are: `protocol`, and `serde_json` for a skill's input schema and results.
 3. In `apps/<id>/manifest.json`, set `id` and `executable` to the id and `name` to the name. Leave `protocol` as it is.
-4. In `apps/<id>/src/main.rs`, set the tab's `id` to the id and its `label` to the name, and change every other tab value that still says template to that same id. A scaffold keeps the contents message and the panel message, because the template declares the shared grid and the properties panel on the right. Remove one of those messages only when the task says this sub-application does not use it. Add no other messages.
+4. In `apps/<id>/src/main.rs`, set `TAB` to the id and the starting `label` to the name. A scaffold keeps the contents message and the panel message, because the template declares the shared grid and the properties panel on the right. Remove one of those messages only when the task says this sub-application does not use it. Keep the template's skill, which renames the tab, until the task gives the sub-application skills of its own; change its `name`, `description`, and `instructions` only to name the new sub-application's tab. Add no other messages.
 5. In `apps/<id>/AGENTS.md`, change the heading to the name and replace the first paragraph with one sentence. If the task states what the sub-application is for, use that as the one sentence. If it does not, use: This sub-application is a scaffold copied from the template. Keep the rules unchanged.
 6. Add `"apps/<id>"` to `members` in the workspace `Cargo.toml`.
 
@@ -29,12 +29,14 @@ Check that `apps/<id>` does not exist yet.
 
 - `cargo build` succeeds.
 - `cargo run -p inpainter -- --app <id>` opens the Inpainter window with one tab labeled with the name, the empty toolbar, and only the shared components the sub-application declares. The host's common UI is all there: the tab strip with its menu button and plus, and the toolbar.
-- With no host, `printf '{"type":"shutdown"}\n' | target/debug/<id>` prints the declaration, starting with `{"type":"hello","protocol":1}` and ending with `{"type":"end"}`, and exits with status 0.
+- With no host, `printf '{"type":"shutdown"}\n' | target/debug/<id>` prints the declaration, starting with `{"type":"hello","protocol":1}`, with a `skills` line before it ends with `{"type":"end"}`, and exits with status 0.
+- With no host, `printf '{"type":"shutdown"}\n' | target/debug/<id> --restore` prints the declaration with no `tab`, `contents`, or `panel` line. Then `printf '{"type":"open"}\n{"type":"shutdown"}\n' | target/debug/<id> --restore` prints, after the declaration, the tab's `contents` and `panel`, then a `tabs` line listing it.
+- With no host, `printf '{"type":"invoke","call":"c1","tab":"<id>","tool":"<id>__tab__rename_tab","input":{"label":"Renamed"},"group":"g1"}\n{"type":"shutdown"}\n' | target/debug/<id>` prints, after the declaration, a `tabs` line with the label Renamed, then `{"type":"result","call":"c1","ok":true,...}`.
 - With no host, `printf '{"type":"ping"}\n{"type":"quit"}\n{"type":"shutdown"}\n' | target/debug/<id>` prints the declaration, then `{"type":"pong"}` and `{"type":"quit_ready"}`. The template answers both; a scaffold keeps those answers, or the host shows it as not responding and its window cannot close.
 
 ## What a scaffold does not include
 
-No tools, commands, menu rows, properties, documents, or saving. When the sub-application needs one of these, the work happens inside its own folder, and the host draws it only from what the sub-application declares. Never add a label, icon, control, or rule for one sub-application to the host.
+No tools, commands, menu rows, properties, documents, or saving, and no skill beyond renaming the tab. When the sub-application needs one of these, the work happens inside its own folder, and the host draws it only from what the sub-application declares. Never add a label, icon, control, or rule for one sub-application to the host.
 
 ## What a sub-application can declare later
 
@@ -45,6 +47,17 @@ After `end`, a sub-application can send these at any time; each replaces the one
 - `contents {kind: "canvas"}`, `document`, and `canvas` — the drawing surface. The host previews each gesture from the declared tool and sends `gesture`, `select`, and `camera`; the sub-application commits and sends the whole `document` back.
 - `ask` and `file` — a question or a file dialog. The host answers with `answer` or `file_result`.
 - `quit_ready` after `quit`, and `pong` after `ping`.
+- `skills` — what the assistant can do here, replacing the skills sent before. Send it with the declaration, before `end`, and again whenever the skills change. Each skill has an `id`, a `name`, a `description`, `instructions` the assistant reads before using it (units, coordinates, what to read first, how ids work), and `tools`, each with a `name`, a `description`, and `input`, a JSON Schema for an object. The host and the assistant know no skill by name: write these for a model that knows nothing else about the sub-application. The types are in `protocol/src/skills.rs`.
+
+## The assistant and the workspace
+
+The host sends these; a sub-application that declares no skills never receives `invoke`.
+
+- `invoke {call, tab, tool, input, group}` — run one tool on that tab. `tool` is `<application id>__<skill id>__<tool name>`, made by `protocol::tool_key`. Carry it out through the same path the person's hand action takes, so undo, saving, and what the host shows are the same as for hand work. Send any `document`, `tabs`, or other message the call caused first, then `result {call, ok, output, images?}`: `output` is JSON for the model to read, such as what was made and its ids; with `ok: false` nothing changed and `output` says why; `images` holds PNG pictures in standard base64. Every change made under one `group`, the assistant's request, is one undo step, until another group or a change by hand. Undo and redo stay with the person, so they are never tools.
+- `open {path?}` — open that file in a new tab or, with no path, the tab the sub-application opens of its own at start. A tab opened this way is declared as the greeting declares tabs: send its `contents` and, when it uses the panel, its `panel`, before the `tabs` that lists it.
+- `keep {tab}` — make sure that tab has a file, through the sub-application's own Save, with its own `file` request for a document that has none. Answer `kept {tab, path?}` once that Save is done, with no path when the person cancelled.
+- Each `tabs` entry carries `path`, the file the tab shows once it has one, and `saves`, whether the tab is a document that can be saved to a file. The template's tab does not save.
+- Started with `--restore` (`protocol::RESTORE_FLAG`), a sub-application opens no document of its own: its greeting has no `tab`, `contents`, or `panel`, and it waits for `open`. The host uses this to reopen a workspace.
 
 The host starts each sub-application with `--data-dir <folder>`, its own folder inside Inpainter's data folder, for its preferences and recovery files.
 

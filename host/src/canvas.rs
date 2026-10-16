@@ -48,6 +48,8 @@ pub(crate) struct Surface {
     /// The new text's box as laid out last frame, for its outline and
     /// handles.
     draft_fit: Option<TextFit>,
+    /// The assistant is working: the pointer only pans and zooms.
+    pub(crate) locked: bool,
 }
 
 /// A select-tool press that has not yet crossed the drag threshold, then one
@@ -144,6 +146,7 @@ impl Surface {
             text_cache: text::Cache::new(),
             canvas_rect: Rect::NOTHING,
             draft_fit: None,
+            locked: false,
         }
     }
 
@@ -243,6 +246,7 @@ impl Surface {
         if primary_pressed
             && press_inside
             && !space
+            && !self.locked
             && self.pan.is_none()
             && self.selecting.is_none()
             && !doc.text_placing()
@@ -271,6 +275,8 @@ impl Surface {
         {
             if space && !doc.text_editing() {
                 self.pan = Some(PanButton::Primary);
+            } else if self.locked {
+                // While the assistant works, a press draws and selects nothing.
             } else if doc.mode() == Mode::Select {
                 self.begin_select(ui, doc, rect);
             } else {
@@ -469,7 +475,7 @@ impl Surface {
     /// With the select tool, a right-click on an object opens its menu, and
     /// a double-click on text edits it in place.
     fn select_clicks(&mut self, doc: &mut Doc, response: &egui::Response, rect: Rect) {
-        if doc.mode() != Mode::Select || doc.text_editing() {
+        if self.locked || doc.mode() != Mode::Select || doc.text_editing() {
             return;
         }
         if response.secondary_clicked()
@@ -1461,6 +1467,8 @@ impl Surface {
             response.on_hover_cursor(CursorIcon::Grabbing);
         } else if space && !doc.text_editing() {
             response.on_hover_cursor(CursorIcon::Grab);
+        } else if self.locked {
+            response.on_hover_cursor(CursorIcon::Default);
         } else if doc.mode() == Mode::Select {
             response.on_hover_cursor(self.select_cursor(ui, doc, rect));
         } else if doc.mode() == Mode::Text {

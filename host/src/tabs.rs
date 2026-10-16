@@ -38,12 +38,14 @@ pub(crate) enum TabEvent {
 }
 
 /// Draws the tab bar: the menu button with the selected tab's declared menu,
-/// every running sub-application's tabs, and the plus.
+/// every running sub-application's tabs, and the plus. While `locked`, the
+/// plus is drawn waiting and does nothing.
 pub(crate) fn show(
     ui: &mut egui::Ui,
     tabs: &[StripTab],
     menu_rows: &[protocol::MenuEntry],
     plus_tip: Option<&str>,
+    locked: bool,
 ) -> Vec<TabEvent> {
     let mut events = Vec::new();
     let mut active_tab = None;
@@ -68,10 +70,10 @@ pub(crate) fn show(
                     16.0,
                     egui::vec2(32.0, TAB_HEIGHT),
                     plus_tip,
-                    true,
+                    !locked,
                     false,
                 );
-                if plus.clicked() {
+                if plus.clicked() && !locked {
                     events.push(TabEvent::Plus);
                 }
             });

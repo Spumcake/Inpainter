@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use draw::document::{Camera, NodeId, Sketch};
 use protocol::{
     Accept, AppMessage, Ask, Canvas, Declaration, FileFilter, FileKind, HostMessage, Keys,
-    MenuEntry, Properties, TabEntry, Tabs, Toolbar,
+    MenuEntry, Properties, Skill, TabEntry, Tabs, Toolbar, ToolResult,
 };
 
 /// How long a closing window waits for the sub-application to exit after
@@ -65,6 +65,14 @@ pub struct Declared {
     pub ask: Option<Ask>,
     pub files: VecDeque<FileRequest>,
     pub quit_ready: bool,
+    /// The skills it provides to the assistant, as last declared.
+    pub skills: Vec<Skill>,
+    /// Counts the `skills` messages, so a change is noticed.
+    pub skills_version: u64,
+    /// Answers to `invoke` not yet passed to the assistant.
+    pub results: VecDeque<ToolResult>,
+    /// Answers to `keep`: the tab, and its file or none when cancelled.
+    pub kept: VecDeque<(String, Option<String>)>,
 }
 
 /// The sub-application's process, or the record that it never started.
@@ -92,13 +100,17 @@ pub struct Running {
 impl Running {
     /// Spawns the sub-application's program, which `apps::discover` found
     /// from its manifest, with its own folder in Inpainter's data folder.
+    /// With `restore`, it opens no document of its own and waits for `open`.
     /// A failed spawn is the same as [`Self::not_started`]: the window still opens.
-    pub fn start(executable: &std::path::Path, data_dir: Option<PathBuf>) -> Self {
+    pub fn start(executable: &std::path::Path, data_dir: Option<PathBuf>, restore: bool) -> Self {
         let mut command = Command::new(executable);
         if let Some(dir) = data_dir
             && std::fs::create_dir_all(&dir).is_ok()
         {
             command.arg("--data-dir").arg(dir);
+        }
+        if restore {
+            command.arg(protocol::RESTORE_FLAG);
         }
         command
             .stdin(Stdio::piped())
@@ -284,6 +296,8 @@ impl Running {
                 label: tab.label.clone(),
                 dirty: false,
                 close_waits: false,
+                path: None,
+                saves: false,
             })
             .collect();
         let active = tabs.first().map(|tab| tab.id.clone());
@@ -439,11 +453,23 @@ impl Running {
             AppMessage::Ask(ask) => declared.ask = Some(ask),
             AppMessage::QuitReady => declared.quit_ready = true,
             AppMessage::Pong => self.last_pong = Instant::now(),
-            AppMessage::Hello { .. }
-            | AppMessage::Tab { .. }
-            | AppMessage::Contents { .. }
-            | AppMessage::Panel { .. }
-            | AppMessage::End => {}
+            // A tab opened after the greeting, such as one a workspace reopens
+            // under `--restore`, declares its contents and panel this way.
+            AppMessage::Contents { tab, kind } => {
+                self.shown.contents.retain(|contents| contents.tab != tab);
+                self.shown.contents.push(protocol::ContentsReport { tab, kind });
+            }
+            AppMessage::Panel { tab, side } => {
+                self.shown.panels.retain(|panel| panel.tab != tab);
+                self.shown.panels.push(protocol::PanelReport { tab, side });
+            }
+            AppMessage::Hello { .. } | AppMessage::Tab { .. } | AppMessage::End => {}
+            AppMessage::Skills { skills } => {
+                declared.skills = skills;
+                declared.skills_version += 1;
+            }
+            AppMessage::ToolResult(result) => declared.results.push_back(result),
+            AppMessage::Kept { tab, path } => declared.kept.push_back((tab, path)),
         }
     }
 

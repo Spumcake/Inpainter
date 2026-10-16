@@ -7,7 +7,9 @@
 use serde::{Deserialize, Serialize};
 
 mod declare;
+mod skills;
 pub use declare::*;
+pub use skills::*;
 
 /// The version this crate speaks. A sub-application's first message says
 /// which version it speaks; the host accepts only this one.
@@ -67,6 +69,19 @@ pub enum AppMessage {
     QuitReady,
     /// The answer to `ping`.
     Pong,
+    /// Every skill the sub-application provides to the assistant, replacing
+    /// those sent before.
+    Skills { skills: Vec<Skill> },
+    /// The answer to one `invoke`, after any message the call caused.
+    #[serde(rename = "result")]
+    ToolResult(ToolResult),
+    /// The answer to `keep`: the file that tab now has, or none when the
+    /// person cancelled.
+    Kept {
+        tab: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
 }
 
 /// What the host writes to a sub-application, on its standard input.
@@ -120,6 +135,25 @@ pub enum HostMessage {
     Quit,
     /// Sent every second. The answer is `pong`.
     Ping,
+    /// Run one tool of a declared skill on that tab. `tool` is the tool's
+    /// key, `<application id>__<skill id>__<tool name>`. Every change made
+    /// under one `group`, the assistant's request, is one undo step.
+    Invoke {
+        call: String,
+        tab: String,
+        tool: String,
+        input: serde_json::Value,
+        group: String,
+    },
+    /// Open that file in a new tab or, with no path, the tab the
+    /// sub-application opens of its own at start. Used to restore a workspace.
+    Open {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
+    /// Make sure that tab has a file, through the sub-application's own Save.
+    /// The answer is `kept`.
+    Keep { tab: String },
     /// The window is closing. Exit.
     Shutdown,
 }
@@ -280,7 +314,10 @@ impl Declaration {
             | AppMessage::Canvas(_)
             | AppMessage::Ask(_)
             | AppMessage::QuitReady
-            | AppMessage::Pong => Accept::More,
+            | AppMessage::Pong
+            | AppMessage::Skills { .. }
+            | AppMessage::ToolResult(_)
+            | AppMessage::Kept { .. } => Accept::More,
             AppMessage::End => Accept::Ready,
         }
     }
@@ -457,5 +494,56 @@ mod tests {
     fn manifest_refuses_protocol_other_than_1() {
         let text = manifest_text("sketch", "sketch", 2);
         assert!(parse_manifest(&text).is_err(), "protocol 2 was accepted");
+    }
+
+    /// Catches a result sent under another type name than `result`, or a
+    /// tool key that splits wrongly at an application id's hyphen.
+    #[test]
+    fn invoke_and_result_round_trip() {
+        let key = tool_key("simple-sketch", "make", "add_shape");
+        assert_eq!(split_tool_key(&key), Some(("simple-sketch", "make", "add_shape")));
+        assert_eq!(split_tool_key("simple-sketch__make"), None);
+
+        let invoke = HostMessage::Invoke {
+            call: "c1".to_string(),
+            tab: "7".to_string(),
+            tool: key,
+            input: serde_json::json!({"kind": "ellipse"}),
+            group: "r1".to_string(),
+        };
+        let line = encode_host_message(&invoke);
+        assert_eq!(parse_host_message(&line).unwrap(), invoke);
+
+        let result = AppMessage::ToolResult(ToolResult {
+            call: "c1".to_string(),
+            ok: true,
+            output: serde_json::json!({"id": 12}),
+            images: Vec::new(),
+        });
+        let line = encode_app_message(&result);
+        assert!(line.contains("\"type\":\"result\""), "{line}");
+        assert_eq!(parse_app_message(&line).unwrap(), result);
+    }
+
+    /// Catches a tab list from before 0.3, without `path` or `saves`, that
+    /// no longer parses.
+    #[test]
+    fn tabs_without_workspace_fields_still_parse() {
+        let line = r#"{"type":"tabs","tabs":[{"id":"1","label":"Untitled 1"}],"active":"1"}"#;
+        let AppMessage::Tabs(tabs) = parse_app_message(line).unwrap() else {
+            panic!("not a tab list");
+        };
+        assert_eq!(tabs.tabs[0].path, None);
+        assert!(!tabs.tabs[0].saves);
+    }
+
+    /// Catches `open` without a path being refused: a workspace reopens a
+    /// tab that has no file this way.
+    #[test]
+    fn open_without_path_parses() {
+        assert_eq!(
+            parse_host_message(r#"{"type":"open"}"#).unwrap(),
+            HostMessage::Open { path: None }
+        );
     }
 }

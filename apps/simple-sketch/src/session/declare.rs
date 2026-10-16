@@ -204,6 +204,10 @@ impl Session {
                     label: tab.name.to_string(),
                     dirty: tab.needs_keep,
                     close_waits: tab.close_waits,
+                    path: self
+                        .file_path(tab.id)
+                        .map(|path| path.display().to_string()),
+                    saves: true,
                 })
                 .collect(),
             active: self.active_id().get().to_string(),
